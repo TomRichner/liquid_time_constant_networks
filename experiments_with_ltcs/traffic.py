@@ -4,7 +4,8 @@ import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Run on CPU
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 import ltc_model as ltc
 from ctrnn_model import CTRNN, NODE, CTGRU
