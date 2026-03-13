@@ -176,7 +176,7 @@ class CheetahModel:
 
     def fit(self,cheetah_data,epochs,verbose=True,log_period=50):
 
-        best_valid_loss = np.PINF
+        best_valid_loss = np.inf
         best_valid_stats = (0,0,0,0,0,0,0)
         self.save()
         for e in range(epochs):

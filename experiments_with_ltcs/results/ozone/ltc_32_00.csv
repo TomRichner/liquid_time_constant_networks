@@ -1,0 +1,2 @@
+best epoch, train loss, train acc, valid loss, valid acc, test loss, test acc
+00000001, 0.14364773, 0.12360304, 0.13831238, 0.12726320, 0.13534124, 0.12085759
