@@ -111,7 +111,7 @@ gcloud compute instances create "${VM_NAME}" \
     --zone="${GCP_ZONE}" \
     --machine-type="${VM_MACHINE}" \
     --image-family="${GCP_IMAGE_FAMILY}" \
-    --boot-disk-size=30GB \
+    --boot-disk-size=15GB \
     --no-address \
     ${SPOT_FLAGS} \
     --metadata="run-name=${RUN_NAME},experiment=${EXPERIMENT_NAME},model=${MODEL},seed=${SEED},train-args=${ARGS},gcs-bucket=${GCS_BUCKET},github-repo=${GITHUB_REPO}" \
