@@ -93,13 +93,13 @@ echo "  TensorFlow: $(python3 -c 'import tensorflow as tf; print(tf.__version__)
 # ── Step 4: Run training ───────────────────────────────────────────
 echo ""
 echo "=== Step 4: Starting training ==="
-TRAIN_CMD="python3 experiments_with_ltcs/${EXPERIMENT}.py --model ${MODEL} --seed ${SEED} ${TRAIN_ARGS}"
+TRAIN_CMD="python3 ${EXPERIMENT}.py --model ${MODEL} --seed ${SEED} ${TRAIN_ARGS}"
 echo "  Command: ${TRAIN_CMD}"
 echo ""
 
 TRAIN_START=$(date +%s)
 
-cd "${REPO_DIR}"
+cd "${REPO_DIR}/experiments_with_ltcs"
 ${TRAIN_CMD}
 
 TRAIN_EXIT=$?
