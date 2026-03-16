@@ -7,6 +7,7 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import ltc_model as ltc
 from ctrnn_model import CTRNN, NODE, CTGRU
+from srnn_model import SRNNCell
 import argparse
 import datetime as dt
 
@@ -142,6 +143,14 @@ class OzoneModel:
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctrnn"):
             self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "hopf"):
+            self.fused_cell = SRNNCell(model_size, n_E=model_size)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn"):
+            n_E = int(0.75 * model_size)
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
