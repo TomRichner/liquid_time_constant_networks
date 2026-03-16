@@ -1,0 +1,157 @@
+#!/bin/bash
+# ─────────────────────────────────────────────────────────────────────
+# startup.sh — VM startup script for Python (TF1) experiment runs
+# ─────────────────────────────────────────────────────────────────────
+# Runs on VM boot (as root). Reads config from VM metadata, downloads
+# the dataset, runs training, uploads results to GCS, and self-deletes.
+# ─────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+# ── Read VM metadata ─────────────────────────────────────────────────
+META_URL="http://metadata.google.internal/computeMetadata/v1/instance"
+META_HEADER="Metadata-Flavor: Google"
+
+get_meta() { curl -s "${META_URL}/attributes/$1" -H "${META_HEADER}"; }
+
+EXPERIMENT=$(get_meta experiment)
+MODEL=$(get_meta model)
+SEED=$(get_meta seed)
+TRAIN_ARGS=$(get_meta train-args)
+GCS_BUCKET=$(get_meta gcs-bucket)
+RUN_NAME=$(get_meta run-name)
+GITHUB_REPO=$(get_meta github-repo)
+VM_NAME=$(curl -s "${META_URL}/name" -H "${META_HEADER}")
+VM_ZONE=$(curl -s "${META_URL}/zone" -H "${META_HEADER}" | awk -F/ '{print $NF}')
+
+RESULT_PATH="${GCS_BUCKET}/results-py/${RUN_NAME}/${MODEL}/${EXPERIMENT}/seed${SEED}"
+LOG_FILE="/tmp/training.log"
+REPO_DIR="/opt/ltc-repo"
+
+# ── Redirect all output to log file ────────────────────────────────
+touch "$LOG_FILE" && chmod 666 "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Python LTC Experiment Runner"
+echo "═══════════════════════════════════════════════════════════════"
+echo "  VM:         ${VM_NAME}"
+echo "  Run:        ${RUN_NAME}"
+echo "  Experiment: ${EXPERIMENT}"
+echo "  Model:      ${MODEL}"
+echo "  Seed:       ${SEED}"
+echo "  Args:       ${TRAIN_ARGS}"
+echo "  GCS Bucket: ${GCS_BUCKET}"
+echo "  Results:    ${RESULT_PATH}"
+echo "  Started:    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "═══════════════════════════════════════════════════════════════"
+
+# ── Step 1: Clone/update code ──────────────────────────────────────
+echo ""
+echo "=== Step 1: Getting latest code ==="
+if [ -d "${REPO_DIR}" ]; then
+    cd "${REPO_DIR}"
+    git pull --ff-only || echo "WARNING: git pull failed, using existing version"
+else
+    git clone "${GITHUB_REPO}" "${REPO_DIR}"
+    cd "${REPO_DIR}"
+fi
+echo "  Commit: $(git rev-parse --short HEAD)"
+
+# ── Step 2: Download dataset from GCS ──────────────────────────────
+echo ""
+echo "=== Step 2: Downloading dataset '${EXPERIMENT}' ==="
+DATASET_DIR="${REPO_DIR}/experiments_with_ltcs/data/${EXPERIMENT}"
+mkdir -p "${DATASET_DIR}"
+
+if [ "${EXPERIMENT}" != "smnist" ]; then
+    gcloud storage cp -r "${GCS_BUCKET}/datasets/${EXPERIMENT}/*" "${DATASET_DIR}/" 2>&1
+    echo "  Downloaded to ${DATASET_DIR}"
+    ls -lh "${DATASET_DIR}/"
+else
+    echo "  SMnist uses Keras download — skipping GCS dataset"
+fi
+
+# ── Step 3: Set up Python environment ──────────────────────────────
+echo ""
+echo "=== Step 3: Setting up Python environment ==="
+if [ -d "/opt/python-venv" ]; then
+    source /opt/python-venv/bin/activate
+    echo "  Using pre-built Python venv"
+else
+    echo "  No pre-built venv found, installing dependencies..."
+    python3 -m venv /tmp/python-venv
+    source /tmp/python-venv/bin/activate
+    pip install --quiet tensorflow numpy pandas
+    echo "  Installed dependencies"
+fi
+python3 --version
+echo "  TensorFlow: $(python3 -c 'import tensorflow as tf; print(tf.__version__)' 2>&1)"
+
+# ── Step 4: Run training ───────────────────────────────────────────
+echo ""
+echo "=== Step 4: Starting training ==="
+TRAIN_CMD="python3 experiments_with_ltcs/${EXPERIMENT}.py --model ${MODEL} --seed ${SEED} ${TRAIN_ARGS}"
+echo "  Command: ${TRAIN_CMD}"
+echo ""
+
+TRAIN_START=$(date +%s)
+
+cd "${REPO_DIR}"
+${TRAIN_CMD}
+
+TRAIN_EXIT=$?
+TRAIN_END=$(date +%s)
+TRAIN_DURATION=$(( TRAIN_END - TRAIN_START ))
+
+echo ""
+echo "  Training exit code: ${TRAIN_EXIT}"
+echo "  Training duration:  ${TRAIN_DURATION}s ($(( TRAIN_DURATION / 60 ))m $(( TRAIN_DURATION % 60 ))s)"
+
+# ── Step 5: Upload results to GCS ──────────────────────────────────
+echo ""
+echo "=== Step 5: Uploading results ==="
+
+# Upload result CSVs
+RESULT_DIR="${REPO_DIR}/experiments_with_ltcs/results/${EXPERIMENT}"
+if [ -d "${RESULT_DIR}" ]; then
+    gcloud storage cp "${RESULT_DIR}"/*.csv "${RESULT_PATH}/"
+    echo "  Uploaded result CSVs"
+else
+    echo "  WARNING: No result directory found at ${RESULT_DIR}"
+fi
+
+# Upload training log
+gcloud storage cp "${LOG_FILE}" "${RESULT_PATH}/training_log.txt"
+
+# Create and upload run metadata
+cat > /tmp/run_metadata.json << EOF
+{
+    "run_name": "${RUN_NAME}",
+    "experiment": "${EXPERIMENT}",
+    "model": "${MODEL}",
+    "seed": ${SEED},
+    "train_args": "${TRAIN_ARGS}",
+    "exit_code": ${TRAIN_EXIT},
+    "duration_seconds": ${TRAIN_DURATION},
+    "vm_name": "${VM_NAME}",
+    "completed": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "commit": "$(cd ${REPO_DIR} && git rev-parse --short HEAD)"
+}
+EOF
+gcloud storage cp /tmp/run_metadata.json "${RESULT_PATH}/"
+echo "  Uploaded run_metadata.json"
+
+# Final log upload (includes upload messages)
+gcloud storage cp "${LOG_FILE}" "${RESULT_PATH}/training_log.txt"
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "  Results at:  ${RESULT_PATH}"
+echo "═══════════════════════════════════════════════════════════════"
+
+# ── Step 6: Self-delete the VM ─────────────────────────────────────
+echo ""
+echo "=== Step 6: Self-deleting VM ==="
+sleep 5
+gcloud compute instances delete "${VM_NAME}" --zone="${VM_ZONE}" --quiet

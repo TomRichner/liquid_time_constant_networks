@@ -82,6 +82,65 @@ def _make_tau_range(lo, hi, n_steps):
     return lo_2d + (hi_2d - lo_2d) * t  # (dim, n_steps)
 
 
+def _apply_dales(W, n_E):
+    """Enforce Dale's law via column-wise softplus.
+
+    E columns (0:n_E):    softplus(W) >= 0
+    I columns (n_E:end):  -softplus(W) <= 0
+    """
+    W_E = tf.nn.softplus(W[:, :n_E])
+    W_I = -tf.nn.softplus(W[:, n_E:])
+    return tf.concat([W_E, W_I], axis=1)
+
+
+def generate_rmt_matrix(n, indegree, f, level_of_chaos=1.0, E_W=0.0, seed=None):
+    """Generate RMT E/I weight matrix (NumPy port of connectivity.jl).
+
+    Args:
+        n: number of neurons
+        indegree: expected in-degree per neuron
+        f: fraction excitatory (0 < f < 1)
+        level_of_chaos: scaling factor
+        E_W: mean offset
+        seed: random seed
+
+    Returns:
+        W: (n, n) weight matrix
+        E_indices: array of E neuron indices
+        I_indices: array of I neuron indices
+    """
+    rng = np.random.RandomState(seed)
+    n_E = int(round(f * n))
+    n_I = n - n_E
+    E_indices = np.arange(n_E)
+    I_indices = np.arange(n_E, n)
+
+    alpha = indegree / n
+    F = 1.0 / np.sqrt(n * alpha * (2.0 - alpha))
+
+    mu_E = 3.0 * F + E_W
+    mu_I = -4.0 * F + E_W
+    sigma_E = F
+    sigma_I = F
+
+    A = rng.randn(n, n)
+    S = (rng.rand(n, n) < alpha).astype(np.float64)
+
+    D = np.zeros(n)
+    D[E_indices] = sigma_E
+    D[I_indices] = sigma_I
+
+    v = np.zeros(n)
+    v[E_indices] = mu_E
+    v[I_indices] = mu_I
+    M = np.ones((n, 1)) @ v.reshape(1, -1)
+
+    W = S * (A @ np.diag(D) + M)
+    W = level_of_chaos * W
+
+    return W.astype(np.float32), E_indices, I_indices
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # SRNNCell
 # ═══════════════════════════════════════════════════════════════════════
@@ -110,7 +169,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                  n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0,
                  ode_solver_unfolds=6, h=1.0/400.0,
                  solver="semi_implicit", readout="synaptic",
-                 per_neuron=False):
+                 per_neuron=False, dales=False):
         super(SRNNCell, self).__init__()
         self._num_units = num_units
         self._n_E = n_E if n_E is not None else num_units
@@ -124,6 +183,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         self._solver = solver
         self._readout = readout
         self._per_neuron = per_neuron
+        self._dales = dales
 
         # Compute total state dimension
         self._state_dim = (
@@ -147,6 +207,21 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
     def build(self, input_shape):
         pass
 
+    def _get_tau_a(self, pop):
+        """Get SFA time constants for population pop ('E' or 'I').
+
+        n_a == 1: single trainable tau (no lo/hi range)
+        n_a >= 2: range from lo to hi via _make_tau_range
+        """
+        n_a = self._n_a_E if pop == 'E' else self._n_a_I
+        if n_a == 1:
+            log_tau = getattr(self, 'log_tau_a_{}'.format(pop))
+            return tf.nn.softplus(log_tau)  # (1,) or (n_pop,)
+        else:
+            lo = getattr(self, 'log_tau_a_{}_lo'.format(pop))
+            hi = getattr(self, 'log_tau_a_{}_hi'.format(pop))
+            return tf.nn.softplus(_make_tau_range(lo, hi, n_a))  # (dim, n_a)
+
     def _get_variables(self, input_size):
         """Create all trainable variables (called once on first __call__)."""
         n = self._num_units
@@ -164,10 +239,22 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                 return np.array([val], dtype=np.float32)
 
         # ── Core weights ──
-        self.W = tf.get_variable(
-            'W', [n, n],
-            initializer=tf.initializers.random_normal(stddev=sigma_w),
-            dtype=tf.float32)
+        if self._dales:
+            # RMT initialization: inv_softplus(|W_rmt|), clamped
+            indegree = min(n, max(1, n))  # full connectivity for small n
+            f = float(n_E) / float(n)
+            W_rmt, _, _ = generate_rmt_matrix(n, indegree, f)
+            W_abs = np.abs(W_rmt)
+            # inv_softplus: log(exp(x) - 1), clamp to avoid extremes
+            W_raw = np.clip(np.log(np.exp(W_abs.astype(np.float64)) - 1.0),
+                            -10.0, 10.0).astype(np.float32)
+            self.W = tf.get_variable(
+                'W', initializer=W_raw, dtype=tf.float32)
+        else:
+            self.W = tf.get_variable(
+                'W', [n, n],
+                initializer=tf.initializers.random_normal(stddev=sigma_w),
+                dtype=tf.float32)
 
         self.W_in = tf.get_variable(
             'W_in', [n, input_size],
@@ -185,7 +272,20 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
             dtype=tf.float32)
 
         # ── SFA parameters for E neurons ──
-        if self._n_a_E > 0:
+        if self._n_a_E == 1:
+            self.log_tau_a_E = tf.get_variable(
+                'log_tau_a_E', shape=_s_or_v(_inv_softplus(1.0), n_E).shape,
+                initializer=tf.constant_initializer(_s_or_v(_inv_softplus(1.0), n_E)),
+                dtype=tf.float32)
+            self.log_c_E = tf.get_variable(
+                'log_c_E', shape=_s_or_v(-3.0, n_E).shape,
+                initializer=tf.constant_initializer(_s_or_v(-3.0, n_E)),
+                dtype=tf.float32)
+            self.c_0_E = tf.get_variable(
+                'c_0_E', shape=_s_or_v(0.0, n_E).shape,
+                initializer=tf.constant_initializer(_s_or_v(0.0, n_E)),
+                dtype=tf.float32)
+        elif self._n_a_E >= 2:
             self.log_tau_a_E_lo = tf.get_variable(
                 'log_tau_a_E_lo', shape=_s_or_v(_inv_softplus(0.25), n_E).shape,
                 initializer=tf.constant_initializer(_s_or_v(_inv_softplus(0.25), n_E)),
@@ -204,7 +304,20 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                 dtype=tf.float32)
 
         # ── SFA parameters for I neurons ──
-        if self._n_a_I > 0:
+        if self._n_a_I == 1:
+            self.log_tau_a_I = tf.get_variable(
+                'log_tau_a_I', shape=_s_or_v(_inv_softplus(1.0), n_I).shape,
+                initializer=tf.constant_initializer(_s_or_v(_inv_softplus(1.0), n_I)),
+                dtype=tf.float32)
+            self.log_c_I = tf.get_variable(
+                'log_c_I', shape=_s_or_v(-3.0, n_I).shape,
+                initializer=tf.constant_initializer(_s_or_v(-3.0, n_I)),
+                dtype=tf.float32)
+            self.c_0_I = tf.get_variable(
+                'c_0_I', shape=_s_or_v(0.0, n_I).shape,
+                initializer=tf.constant_initializer(_s_or_v(0.0, n_I)),
+                dtype=tf.float32)
+        elif self._n_a_I >= 2:
             self.log_tau_a_I_lo = tf.get_variable(
                 'log_tau_a_I_lo', shape=_s_or_v(_inv_softplus(0.25), n_I).shape,
                 initializer=tf.constant_initializer(_s_or_v(_inv_softplus(0.25), n_I)),
@@ -407,20 +520,19 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         br = b * r  # (batch, n)
 
         # ── Fused x update ──
+        W_eff = _apply_dales(self.W, n_E) if self._dales else self.W
         tau_d = tf.nn.softplus(self.log_tau_d)  # (1,) or (n,)
         alpha_x = Δt / tau_d
         # W @ br: (batch, n) @ (n, n)^T → use matmul with W transposed
-        Wbr = tf.matmul(br, self.W, transpose_b=True)  # (batch, n)
+        Wbr = tf.matmul(br, W_eff, transpose_b=True)  # (batch, n)
         x_new = (x + alpha_x * (u + Wbr)) / (1.0 + alpha_x)
 
         new_parts = {'x': x_new, 'a_E': None, 'a_I': None, 'b_E': None, 'b_I': None}
 
         # ── Fused a_E update ──
         if n_a_E > 0 and parts['a_E'] is not None:
-            tau_a_E_2d = tf.nn.softplus(_make_tau_range(
-                self.log_tau_a_E_lo, self.log_tau_a_E_hi, n_a_E))  # (dim, n_a_E)
-            # Reshape for broadcast: (1, dim, n_a_E)
-            tau_a_E = tf.reshape(tau_a_E_2d, [1, -1, n_a_E])
+            tau_a_E_raw = self._get_tau_a('E')  # (dim,) if n_a==1, (dim, n_a) if n_a>=2
+            tau_a_E = tf.reshape(tau_a_E_raw, [1, -1, n_a_E])
             alpha_a_E = Δt / tau_a_E
 
             r_E = tf.reshape(r[:, :n_E], [-1, n_E, 1])  # (batch, n_E, 1)
@@ -430,9 +542,8 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
 
         # ── Fused a_I update ──
         if n_a_I > 0 and parts['a_I'] is not None:
-            tau_a_I_2d = tf.nn.softplus(_make_tau_range(
-                self.log_tau_a_I_lo, self.log_tau_a_I_hi, n_a_I))
-            tau_a_I = tf.reshape(tau_a_I_2d, [1, -1, n_a_I])
+            tau_a_I_raw = self._get_tau_a('I')
+            tau_a_I = tf.reshape(tau_a_I_raw, [1, -1, n_a_I])
             alpha_a_I = Δt / tau_a_I
 
             r_I = tf.reshape(r[:, n_E:], [-1, n_I, 1])
@@ -478,8 +589,9 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         br = b * r
 
         # dx/dt
+        W_eff = _apply_dales(self.W, n_E) if self._dales else self.W
         tau_d = tf.nn.softplus(self.log_tau_d)
-        Wbr = tf.matmul(br, self.W, transpose_b=True)
+        Wbr = tf.matmul(br, W_eff, transpose_b=True)
         dx_dt = (-x + Wbr + u) / tau_d
 
         # Flat dS/dt pieces
@@ -487,9 +599,8 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
 
         # da_E/dt
         if n_a_E > 0 and parts['a_E'] is not None:
-            tau_a_E_2d = tf.nn.softplus(_make_tau_range(
-                self.log_tau_a_E_lo, self.log_tau_a_E_hi, n_a_E))
-            tau_a_E = tf.reshape(tau_a_E_2d, [1, -1, n_a_E])
+            tau_a_E_raw = self._get_tau_a('E')
+            tau_a_E = tf.reshape(tau_a_E_raw, [1, -1, n_a_E])
             r_E = tf.reshape(r[:, :n_E], [-1, n_E, 1])
             c_0_E = tf.reshape(self.c_0_E, [1, -1, 1])
             da_E_dt = (c_0_E + r_E - parts['a_E']) / tau_a_E  # (batch, n_E, n_a_E)
@@ -497,9 +608,8 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
 
         # da_I/dt
         if n_a_I > 0 and parts['a_I'] is not None:
-            tau_a_I_2d = tf.nn.softplus(_make_tau_range(
-                self.log_tau_a_I_lo, self.log_tau_a_I_hi, n_a_I))
-            tau_a_I = tf.reshape(tau_a_I_2d, [1, -1, n_a_I])
+            tau_a_I_raw = self._get_tau_a('I')
+            tau_a_I = tf.reshape(tau_a_I_raw, [1, -1, n_a_I])
             r_I = tf.reshape(r[:, n_E:], [-1, n_I, 1])
             c_0_I = tf.reshape(self.c_0_I, [1, -1, 1])
             da_I_dt = (c_0_I + r_I - parts['a_I']) / tau_a_I

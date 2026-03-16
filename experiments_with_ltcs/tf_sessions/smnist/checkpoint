@@ -1,2 +1,2 @@
-model_checkpoint_path: "ctgru"
-all_model_checkpoint_paths: "ctgru"
+model_checkpoint_path: "srnn"
+all_model_checkpoint_paths: "srnn"
