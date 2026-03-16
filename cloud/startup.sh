@@ -74,6 +74,7 @@ fi
 # ── Step 3: Set up Python environment ──────────────────────────────
 echo ""
 echo "=== Step 3: Setting up Python environment ==="
+export TF_USE_LEGACY_KERAS=1
 if [ -d "/opt/python-venv" ]; then
     source /opt/python-venv/bin/activate
     echo "  Using pre-built Python venv"
@@ -81,7 +82,7 @@ else
     echo "  No pre-built venv found, installing dependencies..."
     python3 -m venv /tmp/python-venv
     source /tmp/python-venv/bin/activate
-    pip install --quiet tensorflow numpy pandas
+    pip install --quiet "tensorflow==2.15.*" numpy pandas tqdm
     echo "  Installed dependencies"
 fi
 python3 --version
