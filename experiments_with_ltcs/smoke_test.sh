@@ -4,7 +4,7 @@
 
 set -o pipefail
 
-MODELS="lstm ctrnn ltc ltc_rk ltc_ex node ctgru"
+MODELS="lstm ctrnn ltc ltc_rk ltc_ex node ctgru srnn"
 EXPERIMENTS="har gesture occupancy traffic ozone power person smnist cheetah"
 
 PASS=0

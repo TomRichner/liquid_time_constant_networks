@@ -7,6 +7,7 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import ltc_model as ltc
 from ctrnn_model import CTRNN, NODE, CTGRU
+from srnn_model import SRNNCell
 import argparse
 
 def cut_in_sequences(x,y,seq_len,inc=1):
@@ -91,6 +92,9 @@ class HarModel:
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctrnn"):
             self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn"):
+            self.fused_cell = SRNNCell(model_size, n_E=model_size)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
