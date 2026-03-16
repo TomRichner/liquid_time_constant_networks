@@ -82,9 +82,11 @@ else
     echo "  No pre-built venv found, installing dependencies..."
     python3 -m venv /tmp/python-venv
     source /tmp/python-venv/bin/activate
-    pip install --quiet "tensorflow==2.15.*" numpy pandas tqdm
+    pip install --quiet "tensorflow==2.15.*" tf_keras numpy pandas tqdm
     echo "  Installed dependencies"
 fi
+# Ensure tf_keras is installed (needed for TF_USE_LEGACY_KERAS=1)
+python3 -c "import tf_keras" 2>/dev/null || pip install --quiet tf_keras
 python3 --version
 echo "  TensorFlow: $(python3 -c 'import tensorflow as tf; print(tf.__version__)' 2>&1)"
 
