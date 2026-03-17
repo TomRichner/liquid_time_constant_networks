@@ -104,12 +104,17 @@ def _get_metric(exp):
     return "loss", "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
 
 
+# Experiments where higher is better
+HIGHER_IS_BETTER = CLASSIFICATION  # accuracy & F1
+
+
 def _build_rows(results):
-    """Build table data rows: list of (exp, metric_name, [cell_strings])."""
+    """Build table data rows: list of (exp, metric_name, [cell_strings], [raw_means])."""
     rows = []
     for exp in EXPERIMENTS:
         metric_name, csv_key, fmt_fn = _get_metric(exp)
         cells = []
+        raw_means = []
         for model in MODELS:
             key = (model, exp)
             if key in results:
@@ -118,10 +123,23 @@ def _build_rows(results):
                 mean = sum(vals) / len(vals)
                 std = statistics.stdev(vals) if len(vals) > 1 else None
                 cells.append(fmt_fn(mean, std))
+                raw_means.append(mean)
             else:
                 cells.append("—")
-        rows.append((exp, metric_name, cells))
+                raw_means.append(None)
+        rows.append((exp, metric_name, cells, raw_means))
     return rows
+
+
+def _best_index(exp, raw_means):
+    """Return index of the best model for this experiment."""
+    valid = [(i, v) for i, v in enumerate(raw_means) if v is not None]
+    if not valid:
+        return None
+    if exp in HIGHER_IS_BETTER:
+        return max(valid, key=lambda x: x[1])[0]
+    else:
+        return min(valid, key=lambda x: x[1])[0]
 
 
 # ── Plain-text table (terminal) ──────────────────────────────────────
@@ -140,8 +158,15 @@ def format_plain(results):
     lines.append(header)
     lines.append("-" * len(header))
 
-    for exp, metric_name, cells in _build_rows(results):
-        row = f"{exp:<14}{metric_name:<10}" + "".join(f"{c:>{cw}}" for c in cells)
+    for exp, metric_name, cells, raw_means in _build_rows(results):
+        best = _best_index(exp, raw_means)
+        parts = []
+        for i, c in enumerate(cells):
+            if i == best:
+                parts.append(f"{'*'+c+'*':>{cw}}")
+            else:
+                parts.append(f"{c:>{cw}}")
+        row = f"{exp:<14}{metric_name:<10}" + "".join(parts)
         lines.append(row)
 
     lines.append("")
@@ -174,8 +199,12 @@ def format_markdown(results, run_name="", num_seeds=1):
     lines.append(header)
     lines.append(sep)
 
-    for exp, metric_name, cells in _build_rows(results):
-        row = "| " + " | ".join([exp, metric_name] + cells) + " |"
+    for exp, metric_name, cells, raw_means in _build_rows(results):
+        best = _best_index(exp, raw_means)
+        styled = []
+        for i, c in enumerate(cells):
+            styled.append(f"**{c}**" if i == best else c)
+        row = "| " + " | ".join([exp, metric_name] + styled) + " |"
         lines.append(row)
 
     lines.append("")
