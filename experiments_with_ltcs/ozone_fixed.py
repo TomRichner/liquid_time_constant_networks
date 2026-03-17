@@ -198,16 +198,16 @@ class OzoneModel:
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.global_variables_initializer())
 
-        self.result_file = os.path.join("results","ozone","{}_{}_{:02d}.csv".format(model_type,model_size,int(100*self.sparsity_level)))
-        if(not os.path.exists("results/ozone")):
-            os.makedirs("results/ozone")
+        self.result_file = os.path.join("results","ozone_fixed","{}_{}_{:02d}.csv".format(model_type,model_size,int(100*self.sparsity_level)))
+        if(not os.path.exists("results/ozone_fixed")):
+            os.makedirs("results/ozone_fixed")
         if(not os.path.isfile(self.result_file)):
             with open(self.result_file,"w") as f:
                 f.write("best epoch, train loss, train accuracy, valid loss, valid accuracy, test loss, test accuracy\n")
 
-        self.checkpoint_path = os.path.join("tf_sessions","ozone","{}".format(model_type))
-        if(not os.path.exists("tf_sessions/ozone")):
-            os.makedirs("tf_sessions/ozone")
+        self.checkpoint_path = os.path.join("tf_sessions","ozone_fixed","{}".format(model_type))
+        if(not os.path.exists("tf_sessions/ozone_fixed")):
+            os.makedirs("tf_sessions/ozone_fixed")
             
         self.saver = tf.train.Saver()
 
