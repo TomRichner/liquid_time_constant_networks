@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-EXPERIMENTS=(har gesture occupancy smnist traffic power ozone person cheetah)
+EXPERIMENTS=(har gesture occupancy smnist traffic power ozone-fixed person cheetah)
 TOTAL_VMS=$(( ${#EXPERIMENTS[@]} * ${#SELECTED_MODELS[@]} * MAX_SEEDS ))
 
 echo "═══════════════════════════════════════════════════════════════"

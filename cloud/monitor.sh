@@ -76,7 +76,7 @@ echo "  Results in GCS — run: ${RUN_NAME}"
 echo "═══════════════════════════════════════════════════════════════"
 
 USE_MODELS=("${MODELS[@]}")
-EXPERIMENTS=(har gesture occupancy smnist traffic power ozone person cheetah)
+EXPERIMENTS=(har gesture occupancy smnist traffic power ozone-fixed person cheetah)
 
 if [ -n "${FILTER_MODEL}" ]; then
     USE_MODELS=("${FILTER_MODEL}")

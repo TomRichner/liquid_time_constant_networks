@@ -19,8 +19,8 @@ from math import log10, floor
 
 GCS_BUCKET = "gs://liquidneuralnets-experiments/results-py"
 
-EXPERIMENTS = ["har", "gesture", "occupancy", "smnist", "traffic", "power", "ozone", "person", "cheetah"]
-CLASSIFICATION = {"har", "gesture", "occupancy", "smnist", "ozone", "person"}
+EXPERIMENTS = ["har", "gesture", "occupancy", "smnist", "traffic", "power", "ozone_fixed", "person", "cheetah"]
+CLASSIFICATION = {"har", "gesture", "occupancy", "smnist", "ozone", "ozone_fixed", "person"}
 REGRESSION = {"traffic", "power", "cheetah"}
 
 MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn"]
@@ -94,7 +94,7 @@ def _fmt_sigfigs(val, n=3):
 
 def _get_metric(exp):
     """Return (metric_name, csv_key, format_fn) for each experiment."""
-    if exp == "ozone":
+    if exp in ("ozone", "ozone_fixed"):
         return "F1-score", "test accuracy", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
     elif exp in CLASSIFICATION:
         return "accuracy", "test accuracy", lambda m, s: f"{m:.2f}% ± {s:.2f}" if s else f"{m:.2f}%"
