@@ -50,5 +50,6 @@ srnn,har,classification,1,021,0.22,95.40,accuracy
 srnn,occupancy,classification,1,023,0.10,95.57,accuracy
 srnn,ozone,classification,1,00000003,0.13532218,0.15697624,accuracy
 srnn,person,classification,1,017,0.91,64.79,accuracy
+srnn,power,regression,1,00000015,0.00090196,0.01884025,mae
 srnn,smnist,classification,1,023,0.20,93.73,accuracy
 srnn,traffic,regression,1,00000013,0.14844710,0.29220843,mae
