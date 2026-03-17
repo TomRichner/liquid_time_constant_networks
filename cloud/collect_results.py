@@ -77,64 +77,63 @@ def collect(run_name, max_seeds=5):
     return results
 
 
+def _fmt_sigfigs(val, n=3):
+    """Format a float to n significant figures."""
+    if val == 0:
+        return "0"
+    from math import log10, floor
+    digits = n - 1 - floor(log10(abs(val)))
+    digits = max(digits, 0)
+    return f"{val:.{digits}f}"
+
+
+def _get_metric(exp):
+    """Return (metric_name, csv_key, format_fn) for each experiment."""
+    if exp == "ozone":
+        return "F1-score", "test accuracy", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+    elif exp in CLASSIFICATION:
+        return "accuracy", "test accuracy", lambda m, s: f"{m:.2f}% ± {s:.2f}" if s else f"{m:.2f}%"
+    elif exp in REGRESSION:
+        metric = "MSE" if exp == "cheetah" else "squared error"
+        return metric, "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+    return "loss", "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+
+
 def format_table(results):
-    """Format results as a readable table, matching Table 3 from the paper."""
+    """Format results matching the paper's Table 3 layout."""
+    import statistics
 
-    # ── Classification table ──
-    # Note: ozone uses F1-score, not accuracy
-    print("\n" + "=" * 100)
-    print("  CLASSIFICATION — Test Metric at Best Validation Epoch")
-    print("  (accuracy % for most tasks; F1-score for ozone)")
-    print("=" * 100)
+    # Column width for each model
+    cw = 20
 
-    cls_exps = [e for e in EXPERIMENTS if e in CLASSIFICATION]
-    header = f"{'Model':<8}" + "".join(f"{e:>12}" for e in cls_exps)
+    # ── Unified table ──
+    print("\n" + "=" * (22 + cw * len(MODELS)))
+    print("  Test performance at best validation epoch (matching Table 3 format)")
+    print("=" * (22 + cw * len(MODELS)))
+
+    header = f"{'Dataset':<14}{'Metric':<10}" + "".join(f"{m:>{cw}}" for m in MODELS)
     print(header)
     print("-" * len(header))
 
-    for model in MODELS:
-        row = f"{model:<8}"
-        for exp in cls_exps:
+    for exp in EXPERIMENTS:
+        metric_name, csv_key, fmt_fn = _get_metric(exp)
+        row = f"{exp:<14}{metric_name:<10}"
+
+        for model in MODELS:
             key = (model, exp)
             if key in results:
                 seeds = results[key]
-                accs = [float(s.get("test accuracy", 0)) for s in seeds]
-                mean = sum(accs) / len(accs)
-                if len(accs) > 1:
-                    import statistics
-                    std = statistics.stdev(accs)
-                    row += f"{mean:>9.2f}±{std:.1f}"
-                else:
-                    row += f"{mean:>12.2f}"
+                vals = [float(s.get(csv_key, 0)) for s in seeds]
+                mean = sum(vals) / len(vals)
+                std = statistics.stdev(vals) if len(vals) > 1 else None
+                cell = fmt_fn(mean, std)
+                row += f"{cell:>{cw}}"
             else:
-                row += f"{'—':>12}"
+                row += f"{'—':>{cw}}"
         print(row)
 
-    # ── Regression table (MSE / MAE) ──
-    print("\n" + "=" * 80)
-    print("  REGRESSION — Test MSE (loss) / MAE at Best Validation Epoch")
-    print("=" * 80)
-
-    reg_exps = [e for e in EXPERIMENTS if e in REGRESSION]
-    header = f"{'Model':<8}" + "".join(f"  {e+' MSE':>14}{e+' MAE':>14}" for e in reg_exps)
-    print(header)
-    print("-" * len(header))
-
-    for model in MODELS:
-        row = f"{model:<8}"
-        for exp in reg_exps:
-            key = (model, exp)
-            if key in results:
-                seeds = results[key]
-                mses = [float(s.get("test loss", 0)) for s in seeds]
-                maes = [float(s.get("test mae", 0)) for s in seeds]
-                mean_mse = sum(mses) / len(mses)
-                mean_mae = sum(maes) / len(maes)
-                row += f"  {mean_mse:>14.6f}{mean_mae:>14.6f}"
-            else:
-                row += f"  {'—':>14}{'—':>14}"
-        print(row)
-
+    print()
+    print(f"  n = seeds per cell (paper uses n=5)")
     print()
 
 
