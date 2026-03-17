@@ -152,7 +152,7 @@ class OzoneModel:
         elif(model_type == "srnn"):
             if ltc_lr_for_srnn:
                 learning_rate = 0.01
-            n_E = int(0.75 * model_size)
+            n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
