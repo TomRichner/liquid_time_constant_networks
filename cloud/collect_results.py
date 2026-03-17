@@ -4,14 +4,18 @@ collect_results.py — Download and tabulate best-epoch results from GCS.
 
 Usage:
     python3 cloud/collect_results.py <run_name>
-    python3 cloud/collect_results.py run25ep
-    python3 cloud/collect_results.py run25ep --csv results.csv
+    python3 cloud/collect_results.py run25ep --seeds 1
+    python3 cloud/collect_results.py run25ep --seeds 5 --csv out.csv
 """
 import argparse
 import csv
+import datetime
 import io
+import os
+import statistics
 import subprocess
 import sys
+from math import log10, floor
 
 GCS_BUCKET = "gs://liquidneuralnets-experiments/results-py"
 
@@ -77,11 +81,12 @@ def collect(run_name, max_seeds=5):
     return results
 
 
+# ── Formatting helpers ────────────────────────────────────────────────
+
 def _fmt_sigfigs(val, n=3):
     """Format a float to n significant figures."""
     if val == 0:
         return "0"
-    from math import log10, floor
     digits = n - 1 - floor(log10(abs(val)))
     digits = max(digits, 0)
     return f"{val:.{digits}f}"
@@ -99,26 +104,12 @@ def _get_metric(exp):
     return "loss", "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
 
 
-def format_table(results):
-    """Format results matching the paper's Table 3 layout."""
-    import statistics
-
-    # Column width for each model
-    cw = 20
-
-    # ── Unified table ──
-    print("\n" + "=" * (22 + cw * len(MODELS)))
-    print("  Test performance at best validation epoch (matching Table 3 format)")
-    print("=" * (22 + cw * len(MODELS)))
-
-    header = f"{'Dataset':<14}{'Metric':<10}" + "".join(f"{m:>{cw}}" for m in MODELS)
-    print(header)
-    print("-" * len(header))
-
+def _build_rows(results):
+    """Build table data rows: list of (exp, metric_name, [cell_strings])."""
+    rows = []
     for exp in EXPERIMENTS:
         metric_name, csv_key, fmt_fn = _get_metric(exp)
-        row = f"{exp:<14}{metric_name:<10}"
-
+        cells = []
         for model in MODELS:
             key = (model, exp)
             if key in results:
@@ -126,19 +117,79 @@ def format_table(results):
                 vals = [float(s.get(csv_key, 0)) for s in seeds]
                 mean = sum(vals) / len(vals)
                 std = statistics.stdev(vals) if len(vals) > 1 else None
-                cell = fmt_fn(mean, std)
-                row += f"{cell:>{cw}}"
+                cells.append(fmt_fn(mean, std))
             else:
-                row += f"{'—':>{cw}}"
-        print(row)
+                cells.append("—")
+        rows.append((exp, metric_name, cells))
+    return rows
 
-    print()
-    print(f"  n = seeds per cell (paper uses n=5)")
-    print()
 
+# ── Plain-text table (terminal) ──────────────────────────────────────
+
+def format_plain(results):
+    """Format results as plain-text table for terminal output."""
+    lines = []
+    cw = 20
+
+    lines.append("")
+    lines.append("=" * (22 + cw * len(MODELS)))
+    lines.append("  Test performance at best validation epoch (Table 3 format)")
+    lines.append("=" * (22 + cw * len(MODELS)))
+
+    header = f"{'Dataset':<14}{'Metric':<10}" + "".join(f"{m:>{cw}}" for m in MODELS)
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    for exp, metric_name, cells in _build_rows(results):
+        row = f"{exp:<14}{metric_name:<10}" + "".join(f"{c:>{cw}}" for c in cells)
+        lines.append(row)
+
+    lines.append("")
+    return lines
+
+
+# ── Markdown table (pandoc-ready) ────────────────────────────────────
+
+def format_markdown(results, run_name="", num_seeds=1):
+    """Format results as pandoc-ready markdown with YAML frontmatter."""
+    lines = []
+
+    # YAML frontmatter for pandoc PDF
+    lines.append("---")
+    lines.append(f'title: "Experiment Results — {run_name}"')
+    lines.append(f'date: "{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}"')
+    lines.append("geometry: landscape,margin=1.5cm")
+    lines.append("fontsize: 10pt")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# Results: {run_name}")
+    lines.append("")
+    lines.append(f"Test performance at best validation epoch. Seeds per cell: n={num_seeds}.")
+    lines.append("Paper reference: Hasani et al. 2021, Table 3 (n=5, 200 epochs).")
+    lines.append("")
+
+    # Markdown table
+    header = "| Dataset | Metric | " + " | ".join(MODELS) + " |"
+    sep = "|---|---|" + "|".join(["---:" for _ in MODELS]) + "|"
+    lines.append(header)
+    lines.append(sep)
+
+    for exp, metric_name, cells in _build_rows(results):
+        row = "| " + " | ".join([exp, metric_name] + cells) + " |"
+        lines.append(row)
+
+    lines.append("")
+    lines.append(f"*Table: {run_name} — {num_seeds} seed(s) per cell.*")
+    lines.append("")
+
+    return lines
+
+
+# ── CSV output ───────────────────────────────────────────────────────
 
 def write_csv_output(results, filename):
     """Write all results to a single CSV file."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["model", "experiment", "task_type", "seed",
@@ -155,16 +206,17 @@ def write_csv_output(results, filename):
                     metric_val, metric_name
                 ])
 
-    print(f"  Results written to {filename}")
 
+# ── Main ─────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Collect experiment results from GCS")
     parser.add_argument("run_name", help="Run name (e.g., run25ep)")
     parser.add_argument("--seeds", type=int, default=5, help="Max seeds to check (default 5)")
-    parser.add_argument("--csv", type=str, default=None, help="Output CSV file")
+    parser.add_argument("--csv", type=str, default=None, help="Output CSV file (overrides default)")
     parser.add_argument("--models", type=str, default=None,
                         help="Space-separated list of models (default: all)")
+    parser.add_argument("--no-save", action="store_true", help="Don't save files, print only")
     args = parser.parse_args()
 
     global MODELS
@@ -181,10 +233,27 @@ def main():
     total = len(MODELS) * len(EXPERIMENTS)
     print(f"\n  Found {found}/{total} experiment results")
 
-    format_table(results)
+    # Print plain-text table to terminal
+    for line in format_plain(results):
+        print(line)
 
-    if args.csv:
-        write_csv_output(results, args.csv)
+    # Save outputs
+    if not args.no_save:
+        out_dir = os.path.join("results", args.run_name)
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Save markdown (pandoc-ready)
+        md_lines = format_markdown(results, run_name=args.run_name, num_seeds=args.seeds)
+        md_file = os.path.join(out_dir, "results.md")
+        with open(md_file, "w") as f:
+            f.write("\n".join(md_lines) + "\n")
+        print(f"  Markdown saved to {md_file}")
+        print(f"    → PDF: pandoc {md_file} -o {os.path.join(out_dir, 'results.pdf')}")
+
+        # Save data CSV
+        csv_file = args.csv or os.path.join(out_dir, "results.csv")
+        write_csv_output(results, csv_file)
+        print(f"  CSV saved to {csv_file}")
 
 
 if __name__ == "__main__":
