@@ -100,12 +100,13 @@ echo "  Commit: $(git rev-parse --short HEAD)"
 
 # ── Step 2: Download dataset from GCS ──────────────────────────────
 echo ""
-echo "=== Step 2: Downloading dataset '${EXPERIMENT}' ==="
-DATASET_DIR="${REPO_DIR}/experiments_with_ltcs/data/${EXPERIMENT}"
+DATASET_NAME="${EXPERIMENT%_fixed}"  # strip _fixed suffix for data dir
+echo "=== Step 2: Downloading dataset '${DATASET_NAME}' ==="
+DATASET_DIR="${REPO_DIR}/experiments_with_ltcs/data/${DATASET_NAME}"
 mkdir -p "${DATASET_DIR}"
 
-if [ "${EXPERIMENT}" != "smnist" ]; then
-    gcloud storage cp -r "${GCS_BUCKET}/datasets/${EXPERIMENT}/*" "${DATASET_DIR}/" 2>&1
+if [ "${DATASET_NAME}" != "smnist" ]; then
+    gcloud storage cp -r "${GCS_BUCKET}/datasets/${DATASET_NAME}/*" "${DATASET_DIR}/" 2>&1
     echo "  Downloaded to ${DATASET_DIR}"
     ls -lh "${DATASET_DIR}/"
 else
