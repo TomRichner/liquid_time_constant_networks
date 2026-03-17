@@ -101,7 +101,7 @@ class PowerData:
 
 class PowerModel:
 
-    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16,same_lr_ltc=False):
+    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16,same_lr_ltc=False,ltc_lr_for_srnn=False):
         self.model_type = model_type
         self.constrain_op = None
         self.batch_size = batch_size
@@ -140,6 +140,8 @@ class PowerModel:
             self.fused_cell = SRNNCell(model_size, n_E=model_size)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn"):
+            if ltc_lr_for_srnn:
+                learning_rate = 0.01
             n_E = int(0.75 * model_size)
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
@@ -247,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr',default=0.001,type=float)
     parser.add_argument('--batch_size',default=16,type=int)
     parser.add_argument('--same_lr_ltc',action='store_true')
+    parser.add_argument('--ltc_lr_for_srnn',action='store_true')
     parser.add_argument('--seed',default=None,type=int)
     args = parser.parse_args()
 
@@ -255,7 +258,7 @@ if __name__ == "__main__":
         tf.set_random_seed(args.seed)
 
     power_data = PowerData()
-    model = PowerModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size,same_lr_ltc=args.same_lr_ltc)
+    model = PowerModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size,same_lr_ltc=args.same_lr_ltc,ltc_lr_for_srnn=args.ltc_lr_for_srnn)
 
     model.fit(power_data,epochs=args.epochs,log_period=args.log)
 
