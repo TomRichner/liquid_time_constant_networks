@@ -41,7 +41,13 @@ def parse_csv(text):
     reader = csv.reader(io.StringIO(text))
     header = [h.strip() for h in next(reader)]
     values = [v.strip() for v in next(reader)]
-    return dict(zip(header, values))
+    d = dict(zip(header, values))
+    # Normalize column names: ozone uses 'test acc' instead of 'test accuracy'
+    for short, full in [("test acc", "test accuracy"), ("valid acc", "valid accuracy"),
+                        ("train acc", "train accuracy")]:
+        if short in d and full not in d:
+            d[full] = d[short]
+    return d
 
 
 def collect(run_name, max_seeds=5):
@@ -74,9 +80,11 @@ def collect(run_name, max_seeds=5):
 def format_table(results):
     """Format results as a readable table, matching Table 3 from the paper."""
 
-    # ── Classification table (accuracy %) ──
+    # ── Classification table ──
+    # Note: ozone uses F1-score, not accuracy
     print("\n" + "=" * 100)
-    print("  CLASSIFICATION — Test Accuracy (%) at Best Validation Epoch")
+    print("  CLASSIFICATION — Test Metric at Best Validation Epoch")
+    print("  (accuracy % for most tasks; F1-score for ozone)")
     print("=" * 100)
 
     cls_exps = [e for e in EXPERIMENTS if e in CLASSIFICATION]

@@ -203,7 +203,7 @@ class OzoneModel:
             os.makedirs("results/ozone")
         if(not os.path.isfile(self.result_file)):
             with open(self.result_file,"w") as f:
-                f.write("best epoch, train loss, train acc, valid loss, valid acc, test loss, test acc\n")
+                f.write("best epoch, train loss, train accuracy, valid loss, valid accuracy, test loss, test accuracy\n")
 
         self.checkpoint_path = os.path.join("tf_sessions","ozone","{}".format(model_type))
         if(not os.path.exists("tf_sessions/ozone")):
@@ -284,7 +284,7 @@ class OzoneModel:
                 accs.append(acc)
 
             if(verbose and e%log_period == 0):
-                print("Epochs {:03d}, train loss: {:0.2f}, train acc: {:0.2f}, valid loss: {:0.2f}, valid acc: {:0.2f}, test loss: {:0.2f}, test acc: {:0.2f}".format(
+                print("Epochs {:03d}, train loss: {:0.2f}, train accuracy: {:0.2f}, valid loss: {:0.2f}, valid accuracy: {:0.2f}, test loss: {:0.2f}, test accuracy: {:0.2f}".format(
                     e,
                     np.mean(losses),np.mean(accs),
                     valid_loss,valid_acc,
@@ -294,7 +294,7 @@ class OzoneModel:
                 break
         self.restore()
         best_epoch,train_loss,train_acc,valid_loss,valid_acc,test_loss,test_acc = best_valid_stats
-        print("Best epoch {:03d}, train loss: {:0.2f}, train acc: {:0.2f}, valid loss: {:0.2f}, valid acc: {:0.2f}, test loss: {:0.2f}, test acc: {:0.2f}".format(
+        print("Best epoch {:03d}, train loss: {:0.2f}, train accuracy: {:0.2f}, valid loss: {:0.2f}, valid accuracy: {:0.2f}, test loss: {:0.2f}, test accuracy: {:0.2f}".format(
             best_epoch,
             train_loss,train_acc,
             valid_loss,valid_acc,
