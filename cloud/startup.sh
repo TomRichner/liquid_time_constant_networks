@@ -45,6 +45,35 @@ echo "  Results:    ${RESULT_PATH}"
 echo "  Started:    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "═══════════════════════════════════════════════════════════════"
 
+# ── Error handler: upload log + self-delete on failure ─────────────
+cleanup_on_error() {
+    local exit_code=$?
+    echo ""
+    echo "!!! FATAL ERROR (exit code: ${exit_code}) at $(date -u +%Y-%m-%dT%H:%M:%SZ) !!!"
+    # Try to upload the error log to GCS
+    gcloud storage cp "${LOG_FILE}" "${RESULT_PATH}/ERROR_training_log.txt" 2>/dev/null || true
+    # Create error metadata
+    cat > /tmp/run_metadata.json <<ERREOF
+{
+    "run_name": "${RUN_NAME}",
+    "experiment": "${EXPERIMENT}",
+    "model": "${MODEL}",
+    "seed": ${SEED},
+    "train_args": "${TRAIN_ARGS}",
+    "exit_code": ${exit_code},
+    "error": true,
+    "vm_name": "${VM_NAME}",
+    "failed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+ERREOF
+    gcloud storage cp /tmp/run_metadata.json "${RESULT_PATH}/" 2>/dev/null || true
+    echo "  Error log uploaded to ${RESULT_PATH}/"
+    # Self-delete
+    sleep 5
+    gcloud compute instances delete "${VM_NAME}" --zone="${VM_ZONE}" --quiet 2>/dev/null || true
+}
+trap cleanup_on_error ERR
+
 # ── Step 1: Clone/update code ──────────────────────────────────────
 echo ""
 echo "=== Step 1: Getting latest code ==="
@@ -52,7 +81,19 @@ if [ -d "${REPO_DIR}" ]; then
     cd "${REPO_DIR}"
     git pull --ff-only || echo "WARNING: git pull failed, using existing version"
 else
-    git clone "${GITHUB_REPO}" "${REPO_DIR}"
+    # Retry git clone up to 3 times (NAT connectivity can be flaky)
+    for attempt in 1 2 3; do
+        echo "  Clone attempt ${attempt}/3..."
+        if git clone "${GITHUB_REPO}" "${REPO_DIR}"; then
+            break
+        fi
+        if [ $attempt -eq 3 ]; then
+            echo "FATAL: git clone failed after 3 attempts"
+            exit 1
+        fi
+        echo "  Retrying in 30s..."
+        sleep 30
+    done
     cd "${REPO_DIR}"
 fi
 echo "  Commit: $(git rev-parse --short HEAD)"
