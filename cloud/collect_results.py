@@ -23,7 +23,7 @@ EXPERIMENTS = ["har", "gesture", "occupancy", "smnist", "traffic", "power", "ozo
 CLASSIFICATION = {"har", "gesture", "occupancy", "smnist", "ozone", "ozone_fixed", "person"}
 REGRESSION = {"traffic", "power", "cheetah"}
 
-MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn"]
+MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron"]
 
 
 def gcs_cat(path):
