@@ -188,8 +188,6 @@ class PowerModel:
         self.save()
         for e in range(epochs):
             if(verbose and e%log_period == 0):
-                print("self.target_y:    ",str(self.target_y.shape))
-                print("power_data.test_y ",str(power_data.test_y.shape))
                 test_acc,test_loss = self.sess.run([self.accuracy,self.loss],{self.x:power_data.test_x,self.target_y: power_data.test_y})
                 valid_acc,valid_loss = self.sess.run([self.accuracy,self.loss],{self.x:power_data.valid_x,self.target_y: power_data.valid_y})
                 # MSE metric -> less is better
