@@ -37,7 +37,7 @@ echo "=== Step 1: Creating temporary VM ==="
 gcloud compute instances create "${TEMP_VM}" \
     --project="${GCP_PROJECT}" \
     --zone="${GCP_ZONE}" \
-    --machine-type=n4d-highmem-2 \
+    --machine-type=n2-highmem-2 \
     --image-family="${BASE_IMAGE_FAMILY}" \
     --image-project="${BASE_IMAGE_PROJECT}" \
     --boot-disk-size=30GB \

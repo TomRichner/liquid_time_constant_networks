@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/config.env"
 
 BATCH_SIZE=8
-BATCH_PAUSE=45
+BATCH_PAUSE=15
 
 # Defaults
 MAX_SEEDS=5
@@ -100,6 +100,7 @@ launch_one() {
 
 # ── Main launch loop ──────────────────────────────────────────────────
 LAUNCHED=0
+FAILED=0
 IDX=0
 TOTAL=${#JOBS[@]}
 
@@ -173,6 +174,8 @@ if [ ${IDX} -lt ${TOTAL} ]; then
             LAUNCHED=$((LAUNCHED + 1))
         else
             echo "  ⚠ FAILED: ${exp} / ${model} / seed ${seed}"
+            LAUNCHED=$((LAUNCHED + 1))
+            FAILED=$((FAILED + 1))
         fi
         IDX=$((IDX + 1))
         sleep 2
