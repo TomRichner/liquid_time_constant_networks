@@ -24,7 +24,8 @@ CLASSIFICATION = {"har", "gesture", "occupancy", "smnist", "ozone", "ozone_fixed
 REGRESSION = {"traffic", "power", "cheetah"}
 
 MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron", "srnn-echo",
-          "srnn-no-adapt", "srnn-sfa-only", "srnn-std-only", "srnn-E-only"]
+          "srnn-no-adapt", "srnn-sfa-only", "srnn-std-only", "srnn-E-only",
+          "srnn-e-only-echo", "srnn-e-only-per-neuron"]
 
 
 def download_run(run_name):

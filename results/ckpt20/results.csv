@@ -1,0 +1,13 @@
+model,experiment,task_type,seed,best_epoch,test_loss,test_metric,metric_name
+ctgru,har,classification,1,019,0.10,96.80,accuracy
+ctrnn,har,classification,1,019,0.19,93.38,accuracy
+lstm,har,classification,1,018,0.11,96.03,accuracy
+ltc,har,classification,1,019,0.18,94.24,accuracy
+node,har,classification,1,019,0.37,88.91,accuracy
+srnn,har,classification,1,018,1.13,83.67,accuracy
+srnn-E-only,har,classification,1,018,0.40,92.10,accuracy
+srnn-echo,har,classification,1,015,1.39,70.71,accuracy
+srnn-no-adapt,har,classification,1,018,0.31,91.81,accuracy
+srnn-per-neuron,har,classification,1,018,1.14,84.43,accuracy
+srnn-sfa-only,har,classification,1,019,0.31,92.44,accuracy
+srnn-std-only,har,classification,1,018,0.44,91.43,accuracy

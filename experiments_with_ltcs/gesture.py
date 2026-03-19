@@ -172,6 +172,16 @@ class GestureModel:
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-e-only-echo"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-e-only-per-neuron"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
 
@@ -184,7 +194,7 @@ class GestureModel:
         ))
         self.lr_var = tf.Variable(1e-8, trainable=False, dtype=tf.float32)
         optimizer = tf.train.AdamOptimizer(self.lr_var)
-        self.train_step = optimizer.minimize(self.loss, var_list=[v for v in tf.trainable_variables() if "W_in" in v.name or "dense" in v.name]) if model_type == "srnn-echo" else optimizer.minimize(self.loss)
+        self.train_step = optimizer.minimize(self.loss, var_list=[v for v in tf.trainable_variables() if "W_in" in v.name or "dense" in v.name]) if model_type in ("srnn-echo", "srnn-e-only-echo") else optimizer.minimize(self.loss)
 
         model_prediction = tf.argmax(input=self.y, axis=2)
         self.accuracy = tf.reduce_mean(tf.cast(tf.equal(model_prediction, tf.cast(self.target_y,tf.int64)), tf.float32))
