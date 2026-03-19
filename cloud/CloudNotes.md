@@ -73,7 +73,7 @@ Per-experiment config files with training args, machine type overrides, and seed
 Example (`har.env`):
 ```
 EXPERIMENT_NAME=har
-ARGS="--epochs 200 --size 32 --batch_size 128 --ltc_lr_for_srnn --log 1"
+ARGS="--epochs 200 --size 32 --batch_size 128 --log 1"
 MACHINE_TYPE=n2-standard-2
 N_SEEDS=5
 ```
@@ -219,22 +219,39 @@ gs://liquidneuralnets-experiments/
                 └── seed<N>/
                     ├── training_log.txt      # Full console output (success marker)
                     ├── <model>_32.csv        # Best-epoch metrics
-                    └── run_metadata.json     # Run config, timing, git commit
+                    ├── run_metadata.json     # Run config, timing, git commit
+                    └── checkpoint/           # All checkpoints
+                        ├── <model>.index     # Best validation
+                        ├── <model>.data-00000-of-00001
+                        ├── <model>_init.*    # Pre-training weights
+                        ├── <model>_epoch10.* # Periodic (every 10)
+                        ├── <model>_epoch20.*
+                        ├── ...               
+                        └── <model>_last.*    # Final epoch
 ```
+
+## Checkpoint System
+
+Four types of checkpoints are saved during training:
+
+| Checkpoint | Path suffix | When | Overwrites? |
+|------------|-------------|------|-------------|
+| **Init** | `_init` | Before epoch 0 | No (saved once) |
+| **Periodic** | `_epoch10`, `_epoch20`, ... | Every 10 epochs | No (accumulates) |
+| **Best** | (no suffix) | On best validation metric | Yes |
+| **Last** | `_last` | After final epoch | Yes |
+
+All checkpoints are uploaded to `checkpoint/` in GCS via `startup.sh`.
+
+The `inspect_srnn_params.py` script reads the `_init` checkpoint to compare initial vs learned weights.
 
 ## Models
 
-| Model | Key | Description |
-|-------|-----|-------------|
-| LSTM | `lstm` | Baseline LSTM |
-| LTC | `ltc` | Liquid Time-Constant (semi-implicit solver) |
-| CTRNN | `ctrnn` | Continuous-Time RNN |
-| CT-GRU | `ctgru` | Continuous-Time GRU |
-| Neural ODE | `node` | Neural ODE |
-| SRNN | `srnn` | Structured RNN (Dale's law, 50% E/I) |
-| SRNN Per-Neuron | `srnn-per-neuron` | SRNN with per-neuron dynamics params |
+See [Models.md](Models.md) for full details on all model variants.
 
-Previously available (removed): `ltc_rk` (Runge-Kutta LTC), `ltc_ex` (Explicit LTC).
+## Learning Rate
+
+See [LearningRate.md](LearningRate.md) for learning rate schedule documentation.
 
 ## Experiments
 
