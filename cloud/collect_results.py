@@ -23,7 +23,8 @@ EXPERIMENTS = ["har", "gesture", "occupancy", "smnist", "traffic", "power", "ozo
 CLASSIFICATION = {"har", "gesture", "occupancy", "smnist", "ozone", "ozone_fixed", "person"}
 REGRESSION = {"traffic", "power", "cheetah"}
 
-MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron", "srnn-echo"]
+MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron", "srnn-echo",
+          "srnn-no-adapt", "srnn-sfa-only", "srnn-std-only", "srnn-E-only"]
 
 
 def download_run(run_name):

@@ -135,6 +135,26 @@ class CheetahModel:
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-no-adapt"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-sfa-only"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-std-only"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-E-only"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
 
