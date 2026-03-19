@@ -15,6 +15,7 @@ All models are 32 neurons (default `--size 32`), trained with Adam optimizer and
 | SRNN Per-Neuron | `srnn-per-neuron` | Ours | SRNN with per-neuron dynamics params |
 | SRNN Echo | `srnn-echo` | Ours | SRNN reservoir: only W_in + Dense are trained |
 | SRNN No-Adapt | `srnn-no-adapt` | Ours | SRNN with no adaptation (ablation) |
+| SRNN No-Adapt No-Dales | `srnn-no-adapt-no-dales` | Ours | SRNN with no adaptation, no Dale's law |
 | SRNN SFA-Only | `srnn-sfa-only` | Ours | SRNN with SFA on E neurons only (ablation) |
 | SRNN STD-Only | `srnn-std-only` | Ours | SRNN with STD on E neurons only (ablation) |
 | SRNN E-Only | `srnn-E-only` | Ours | SRNN with both SFA+STD on E neurons only (ablation) |
@@ -76,6 +77,7 @@ These test the contribution of individual adaptation mechanisms. All use Dale's 
 | `srnn-sfa-only` | 3 | 0 | 0 | 0 | SFA alone |
 | `srnn-std-only` | 0 | 0 | 1 | 0 | STD alone |
 | `srnn-no-adapt` | 0 | 0 | 0 | 0 | No adaptation (just Dale's E/I) |
+| `srnn-no-adapt-no-dales` | 0 | 0 | 0 | 0 | No adaptation, no Dale's law |
 | `srnn-e-only-echo` | 3 | 0 | 1 | 0 | E-only reservoir (frozen) |
 
 The ablation ladder answers: Does adaptation help? Is SFA or STD more important? Does I-neuron adaptation matter?
