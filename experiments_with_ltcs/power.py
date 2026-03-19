@@ -194,6 +194,9 @@ class PowerModel:
     def save(self):
         self.saver.save(self.sess, self.checkpoint_path)
 
+    def save_named(self, suffix):
+        self.saver.save(self.sess, self.checkpoint_path + suffix)
+
     def restore(self):
         self.saver.restore(self.sess, self.checkpoint_path)
 
@@ -202,6 +205,7 @@ class PowerModel:
 
         best_valid_loss = np.inf
         best_valid_stats = (0,0,0,0,0,0,0)
+        self.save_named("_init")
         self.save()
         for e in range(epochs):
             if(verbose and e%log_period == 0):
@@ -235,8 +239,11 @@ class PowerModel:
                     valid_loss,valid_acc,
                     test_loss,test_acc
                 ))
+            if(e > 0 and e % 10 == 0):
+                self.save_named("_epoch{}".format(e))
             if(e > 0 and (not np.isfinite(np.mean(losses)))):
                 break
+        self.save_named("_last")
         self.restore()
         best_epoch,train_loss,train_acc,valid_loss,valid_acc,test_loss,test_acc = best_valid_stats
         print("Best epoch {:03d}, train loss: {:0.2f}, train mae: {:0.2f}, valid loss: {:0.2f}, valid mae: {:0.2f}, test loss: {:0.2f}, test mae: {:0.2f}".format(

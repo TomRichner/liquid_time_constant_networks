@@ -165,15 +165,15 @@ else
     echo "  WARNING: No result directory found at ${RESULT_DIR}"
 fi
 
-# Upload model checkpoint (best validation weights)
+# Upload model checkpoints (init, periodic, best, last)
 # TF Saver saves as file prefix: <model>.index, <model>.data-00000-of-00001
-# plus a 'checkpoint' metadata file in the parent directory
+# Named checkpoints use suffixes: _init, _epoch10, _epoch20, ..., _last
 CKPT_DIR="${REPO_DIR}/experiments_with_ltcs/tf_sessions/${EXPERIMENT}"
 if [ -d "${CKPT_DIR}" ]; then
-    gcloud storage cp "${CKPT_DIR}/${MODEL}".* "${RESULT_PATH}/checkpoint/"
+    gcloud storage cp "${CKPT_DIR}/"*.* "${RESULT_PATH}/checkpoint/"
     # Also upload the TF checkpoint metadata file if it exists
     [ -f "${CKPT_DIR}/checkpoint" ] && gcloud storage cp "${CKPT_DIR}/checkpoint" "${RESULT_PATH}/checkpoint/"
-    echo "  Uploaded model checkpoint"
+    echo "  Uploaded all checkpoints"
 else
     echo "  WARNING: No checkpoint directory at ${CKPT_DIR}"
 fi
