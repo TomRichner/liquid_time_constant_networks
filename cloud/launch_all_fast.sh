@@ -24,10 +24,11 @@ MAX_SEEDS=5
 OVERRIDE=""
 DRY_RUN=false
 SELECTED_MODELS=("${MODELS[@]}")
+SELECTED_EXPERIMENTS=()
 
 # Parse arguments
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <run_name> [--seeds N] [--models \"m1 m2\"] [--dry-run] [extra flags]"
+    echo "Usage: $0 <run_name> [--seeds N] [--models \"m1 m2\"] [--experiments \"e1 e2\"] [--dry-run] [extra flags]"
     exit 1
 fi
 
@@ -38,13 +39,19 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --seeds)   MAX_SEEDS=$2; shift 2 ;;
         --models)  IFS=' ' read -ra SELECTED_MODELS <<< "$2"; shift 2 ;;
+        --experiments) IFS=' ' read -ra SELECTED_EXPERIMENTS <<< "$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --)        shift; OVERRIDE="${OVERRIDE} $*"; break ;;
         *)         OVERRIDE="${OVERRIDE} $1"; shift ;;
     esac
 done
 
-EXPERIMENTS=(har gesture occupancy smnist traffic power ozone-fixed person cheetah)
+ALL_EXPERIMENTS=(har gesture occupancy smnist traffic power ozone-fixed person cheetah)
+if [ ${#SELECTED_EXPERIMENTS[@]} -eq 0 ]; then
+    EXPERIMENTS=("${ALL_EXPERIMENTS[@]}")
+else
+    EXPERIMENTS=("${SELECTED_EXPERIMENTS[@]}")
+fi
 TOTAL_VMS=$(( ${#EXPERIMENTS[@]} * ${#SELECTED_MODELS[@]} * MAX_SEEDS ))
 
 echo "═══════════════════════════════════════════════════════════════"
