@@ -57,7 +57,7 @@ if [ -n "${OVERRIDE_ARGS}" ]; then
 fi
 
 # ── VM name and machine type ───────────────────────────────────────
-VM_NAME=$(echo "${RUN_NAME}-${MODEL}-${EXPERIMENT_NAME}-seed${SEED}" | tr '_' '-')
+VM_NAME=$(echo "${RUN_NAME}-${MODEL}-${EXPERIMENT_NAME}-seed${SEED}" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
 VM_MACHINE="${MACHINE_TYPE:-${GCP_MACHINE_TYPE}}"
 
 # ── Check concurrency limit ───────────────────────────────────────
