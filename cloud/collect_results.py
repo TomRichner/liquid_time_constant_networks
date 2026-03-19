@@ -26,18 +26,20 @@ REGRESSION = {"traffic", "power", "cheetah"}
 MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron"]
 
 
-def gcs_cat(path):
-    """Read file contents from GCS, return string or None on failure."""
-    try:
-        r = subprocess.run(
-            ["gcloud", "storage", "cat", path],
-            capture_output=True, text=True, timeout=30
-        )
-        if r.returncode == 0:
-            return r.stdout.strip()
-    except Exception:
-        pass
-    return None
+def download_run(run_name):
+    """Bulk-download all results for a run to a local temp dir. Returns local path."""
+    base_dir = "/tmp/collect_results"
+    local_dir = os.path.join(base_dir, run_name)
+    os.makedirs(base_dir, exist_ok=True)
+    gcs_path = f"{GCS_BUCKET}/{run_name}/"
+    print(f"  Downloading {gcs_path} → {local_dir}/ ...")
+    r = subprocess.run(
+        ["gcloud", "storage", "cp", "-r", gcs_path, base_dir],
+        capture_output=True, text=True, timeout=120
+    )
+    if r.returncode != 0:
+        print(f"  WARNING: gcloud storage cp failed: {r.stderr.strip()}", file=sys.stderr)
+    return local_dir
 
 
 def parse_csv(text):
@@ -55,20 +57,24 @@ def parse_csv(text):
 
 
 def collect(run_name, max_seeds=5):
-    """Collect results for all experiments/models/seeds."""
+    """Collect results for all experiments/models/seeds from local download."""
+    local_dir = download_run(run_name)
     results = {}  # (model, experiment) -> list of dicts (one per seed)
 
     for model in MODELS:
         for exp in EXPERIMENTS:
             seed_results = []
             for seed in range(1, max_seeds + 1):
+                seed_dir = os.path.join(local_dir, model, exp, f"seed{seed}")
+                if not os.path.isdir(seed_dir):
+                    continue
                 # Try known CSV name patterns
-                for suffix in [f"{model}_{32}.csv", f"{model}_{32}_00.csv"]:
-                    path = f"{GCS_BUCKET}/{run_name}/{model}/{exp}/seed{seed}/{suffix}"
-                    text = gcs_cat(path)
-                    if text:
+                for suffix in [f"{model}_32.csv", f"{model}_32_00.csv"]:
+                    csv_path = os.path.join(seed_dir, suffix)
+                    if os.path.isfile(csv_path):
                         try:
-                            d = parse_csv(text)
+                            with open(csv_path) as f:
+                                d = parse_csv(f.read().strip())
                             d["seed"] = seed
                             seed_results.append(d)
                         except Exception:

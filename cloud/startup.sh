@@ -165,6 +165,15 @@ else
     echo "  WARNING: No result directory found at ${RESULT_DIR}"
 fi
 
+# Upload model checkpoint (best validation weights)
+CKPT_DIR="${REPO_DIR}/experiments_with_ltcs/tf_sessions/${EXPERIMENT}"
+if [ -d "${CKPT_DIR}" ]; then
+    gcloud storage cp -r "${CKPT_DIR}/${MODEL}/"* "${RESULT_PATH}/checkpoint/"
+    echo "  Uploaded model checkpoint"
+else
+    echo "  WARNING: No checkpoint directory at ${CKPT_DIR}"
+fi
+
 # Upload training log
 gcloud storage cp "${LOG_FILE}" "${RESULT_PATH}/training_log.txt"
 
