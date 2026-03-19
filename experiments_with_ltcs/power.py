@@ -101,7 +101,7 @@ class PowerData:
 
 class PowerModel:
 
-    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16,same_lr_ltc=False,ltc_lr_for_srnn=False):
+    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16):
         self.model_type = model_type
         self.constrain_op = None
         self.batch_size = batch_size
@@ -115,8 +115,6 @@ class PowerModel:
 
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type.startswith("ltc")):
-            if not same_lr_ltc:
-                learning_rate = 0.01 # LTC needs a higher learning rate
             self.wm = ltc.LTCCell(model_size)
             if(model_type.endswith("_rk")):
                 self.wm._solver = ltc.ODESolver.RungeKutta
@@ -140,15 +138,11 @@ class PowerModel:
             self.fused_cell = SRNNCell(model_size, n_E=model_size)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn"):
-            if ltc_lr_for_srnn:
-                learning_rate = 0.01
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-per-neuron"):
-            if ltc_lr_for_srnn:
-                learning_rate = 0.01
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True)
@@ -185,7 +179,8 @@ class PowerModel:
         self.y = tf.layers.Dense(1,activation=None,kernel_initializer=tf.keras.initializers.TruncatedNormal())(head)
         print("logit shape: ",str(self.y.shape))
         self.loss = tf.reduce_mean(tf.square(self.target_y-self.y))
-        optimizer = tf.train.AdamOptimizer(learning_rate)
+        self.lr_var = tf.Variable(1e-8, trainable=False, dtype=tf.float32)
+        optimizer = tf.train.AdamOptimizer(self.lr_var)
         if model_type == "srnn-echo":
             trainable = [v for v in tf.trainable_variables()
                          if "W_in" in v.name or "dense" in v.name]
@@ -222,9 +217,13 @@ class PowerModel:
 
 
     def fit(self,power_data,epochs,verbose=True,log_period=50):
+        from lr_schedule import warmup_hold_cosine_lr
 
         best_valid_loss = np.inf
         best_valid_stats = (0,0,0,0,0,0,0)
+        batches_per_epoch = power_data.train_x.shape[1] // self.batch_size
+        total_steps = epochs * batches_per_epoch
+        global_step = 0
         self.save_named("_init")
         self.save()
         for e in range(epochs):
@@ -245,12 +244,15 @@ class PowerModel:
             losses = []
             accs = []
             for batch_x,batch_y in power_data.iterate_train(batch_size=self.batch_size):
+                lr = warmup_hold_cosine_lr(global_step, total_steps)
+                self.sess.run(self.lr_var.assign(lr))
                 acc,loss,_ = self.sess.run([self.accuracy,self.loss,self.train_step],{self.x:batch_x,self.target_y: batch_y})
                 if(not self.constrain_op is None):
                     self.sess.run(self.constrain_op)
 
                 losses.append(loss)
                 accs.append(acc)
+                global_step += 1
 
             if(verbose and e%log_period == 0):
                 print("Epochs {:03d}, train loss: {:0.2f}, train mae: {:0.2f}, valid loss: {:0.2f}, valid mae: {:0.2f}, test loss: {:0.2f}, test mae: {:0.2f}".format(
@@ -290,8 +292,6 @@ if __name__ == "__main__":
     parser.add_argument('--epochs',default=200,type=int)
     parser.add_argument('--lr',default=0.001,type=float)
     parser.add_argument('--batch_size',default=16,type=int)
-    parser.add_argument('--same_lr_ltc',action='store_true')
-    parser.add_argument('--ltc_lr_for_srnn',action='store_true')
     parser.add_argument('--seed',default=None,type=int)
     args = parser.parse_args()
 
@@ -300,7 +300,7 @@ if __name__ == "__main__":
         tf.set_random_seed(args.seed)
 
     power_data = PowerData()
-    model = PowerModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size,same_lr_ltc=args.same_lr_ltc,ltc_lr_for_srnn=args.ltc_lr_for_srnn)
+    model = PowerModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size)
 
     model.fit(power_data,epochs=args.epochs,log_period=args.log)
 
