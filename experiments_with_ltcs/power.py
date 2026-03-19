@@ -153,6 +153,11 @@ class PowerModel:
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
+        elif(model_type == "srnn-echo"):
+            n_E = model_size // 2
+            self.fused_cell = SRNNCell(model_size, n_E=n_E,
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
+            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
 
@@ -161,7 +166,12 @@ class PowerModel:
         print("logit shape: ",str(self.y.shape))
         self.loss = tf.reduce_mean(tf.square(self.target_y-self.y))
         optimizer = tf.train.AdamOptimizer(learning_rate)
-        self.train_step = optimizer.minimize(self.loss)
+        if model_type == "srnn-echo":
+            trainable = [v for v in tf.trainable_variables()
+                         if "W_in" in v.name or "dense" in v.name]
+            self.train_step = optimizer.minimize(self.loss, var_list=trainable)
+        else:
+            self.train_step = optimizer.minimize(self.loss)
 
         self.accuracy = tf.reduce_mean(tf.abs(self.target_y-self.y))
 
