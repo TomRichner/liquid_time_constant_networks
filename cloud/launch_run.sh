@@ -58,7 +58,7 @@ fi
 
 # ── VM name and machine type ───────────────────────────────────────
 VM_NAME=$(echo "${RUN_NAME}-${MODEL}-${EXPERIMENT_NAME}-seed${SEED}" | tr '_' '-' | tr '[:upper:]' '[:lower:]')
-VM_MACHINE="${MACHINE_TYPE:-${GCP_MACHINE_TYPE}}"
+VM_MACHINE="${GCP_VM_FAMILY}-${MACHINE_TIER:-${GCP_DEFAULT_TIER}}"
 
 # ── Check concurrency limit ───────────────────────────────────────
 echo "=== Pre-launch Check ==="
