@@ -10,7 +10,7 @@ import math
 
 
 def warmup_hold_cosine_lr(step, total_steps,
-                          start_lr=1e-8, max_lr=5e-4, end_lr=None):
+                          start_lr=1e-8, max_lr=5e-3, end_lr=None):
     """Compute learning rate for a given batch step.
 
     Args:
