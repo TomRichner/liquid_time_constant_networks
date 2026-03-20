@@ -28,16 +28,22 @@ MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron", "s
           "srnn-E-only", "srnn-e-only-echo", "srnn-e-only-per-neuron"]
 
 
-def download_run(run_name):
-    """Bulk-download all results for a run to a local temp dir. Returns local path."""
-    base_dir = "/tmp/collect_results"
+def download_run(run_name, with_checkpoints=False):
+    """Bulk-download all results for a run to project-local tmp dir. Returns local path."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(script_dir)
+    base_dir = os.path.join(project_dir, "tmp", "collect_results")
     local_dir = os.path.join(base_dir, run_name)
     os.makedirs(base_dir, exist_ok=True)
     gcs_path = f"{GCS_BUCKET}/{run_name}/"
     print(f"  Downloading {gcs_path} → {local_dir}/ ...")
+    os.makedirs(local_dir, exist_ok=True)
+    cmd = ["gcloud", "storage", "rsync", "-r", gcs_path, local_dir]
+    if not with_checkpoints:
+        cmd.extend(["--exclude", "checkpoint/.*"])
+        print(f"  (skipping checkpoints; use --with-checkpoints to include)")
     r = subprocess.run(
-        ["gcloud", "storage", "cp", "-r", gcs_path, base_dir],
-        capture_output=True, text=True, timeout=120
+        cmd, capture_output=True, text=True, timeout=600
     )
     if r.returncode != 0:
         print(f"  WARNING: gcloud storage cp failed: {r.stderr.strip()}", file=sys.stderr)
@@ -58,9 +64,9 @@ def parse_csv(text):
     return d
 
 
-def collect(run_name, max_seeds=5):
+def collect(run_name, max_seeds=5, with_checkpoints=False):
     """Collect results for all experiments/models/seeds from local download."""
-    local_dir = download_run(run_name)
+    local_dir = download_run(run_name, with_checkpoints=with_checkpoints)
     results = {}  # (model, experiment) -> list of dicts (one per seed)
 
     for model in MODELS:
@@ -254,6 +260,8 @@ def main():
     parser.add_argument("--models", type=str, default=None,
                         help="Space-separated list of models (default: all)")
     parser.add_argument("--no-save", action="store_true", help="Don't save files, print only")
+    parser.add_argument("--with-checkpoints", action="store_true",
+                        help="Also download checkpoint files (slow for large runs)")
     args = parser.parse_args()
 
     global MODELS
@@ -264,7 +272,7 @@ def main():
     print(f"  Models: {', '.join(MODELS)}")
     print(f"  Seeds:  1-{args.seeds}")
 
-    results = collect(args.run_name, max_seeds=args.seeds)
+    results = collect(args.run_name, max_seeds=args.seeds, with_checkpoints=args.with_checkpoints)
 
     found = len(results)
     total = len(MODELS) * len(EXPERIMENTS)

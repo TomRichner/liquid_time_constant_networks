@@ -377,19 +377,20 @@ def main():
                         help="Output directory (default: results/<run>/)")
     args = parser.parse_args()
 
-    base = "/Users/tom/Desktop/local_code/liquid_time_constant_networks"
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     if args.local:
         base_dir = args.local
     else:
         # Use collect_results download location, or download if needed
-        base_dir = f"/tmp/collect_results/{args.run}"
+        base_dir = os.path.join(base, "tmp", "collect_results", args.run)
         if not os.path.exists(base_dir):
             print(f"  No local data found. Downloading from GCS...")
             gcs_path = f"gs://liquidneuralnets-experiments/results-py/{args.run}/"
-            os.makedirs("/tmp/collect_results", exist_ok=True)
+            dl_base = os.path.join(base, "tmp", "collect_results")
+            os.makedirs(dl_base, exist_ok=True)
             subprocess.run(
-                ["gcloud", "storage", "cp", "-r", gcs_path, "/tmp/collect_results/"],
+                ["gcloud", "storage", "cp", "-r", gcs_path, dl_base],
                 check=True, capture_output=True
             )
 
