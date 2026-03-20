@@ -211,7 +211,7 @@ class OccupancyModel:
         if(not os.path.exists("tf_sessions/occupancy")):
             os.makedirs("tf_sessions/occupancy")
             
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
     def get_sparsity_ops(self):
         tf_vars = tf.trainable_variables()

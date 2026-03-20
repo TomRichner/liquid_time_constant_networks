@@ -218,7 +218,7 @@ class GestureModel:
         if(not os.path.exists("tf_sessions/gesture")):
             os.makedirs("tf_sessions/gesture")
             
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
     def save(self):
         self.saver.save(self.sess, self.checkpoint_path)

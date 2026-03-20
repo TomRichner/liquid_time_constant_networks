@@ -226,7 +226,7 @@ class TrafficModel:
         if not os.path.exists("tf_sessions/traffic"):
             os.makedirs("tf_sessions/traffic")
 
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
     def save(self):
         self.saver.save(self.sess, self.checkpoint_path)

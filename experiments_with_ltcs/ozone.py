@@ -256,7 +256,7 @@ class OzoneModel:
         if(not os.path.exists("tf_sessions/ozone")):
             os.makedirs("tf_sessions/ozone")
             
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
     def get_sparsity_ops(self):
         tf_vars = tf.trainable_variables()

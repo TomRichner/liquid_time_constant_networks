@@ -198,7 +198,7 @@ class CheetahModel:
         if(not os.path.exists("tf_sessions/cheetah")):
             os.makedirs("tf_sessions/cheetah")
             
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
 
     def get_sparsity_ops(self):

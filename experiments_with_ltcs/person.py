@@ -286,7 +286,7 @@ class PersonModel:
         if(not os.path.exists("tf_sessions/person")):
             os.makedirs("tf_sessions/person")
             
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=None)
 
     def get_sparsity_ops(self):
         tf_vars = tf.trainable_variables()
