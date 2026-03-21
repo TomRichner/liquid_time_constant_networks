@@ -139,6 +139,57 @@ TRAIN_CMD="python3 ${EXPERIMENT}.py --model ${MODEL} --seed ${SEED} ${TRAIN_ARGS
 echo "  Command: ${TRAIN_CMD}"
 echo ""
 
+# ── Compute periodic upload interval ──────────────────────────────
+EPOCHS=$(echo "${TRAIN_ARGS}" | sed -n 's/.*--epochs[[:space:]]\+\([0-9]\+\).*/\1/p')
+EPOCHS=${EPOCHS:-200}
+if [ "${EPOCHS}" -gt 50 ]; then
+    UPLOAD_INTERVAL=$(( EPOCHS / 10 ))
+else
+    UPLOAD_INTERVAL=5
+fi
+echo "  Periodic GCS upload every ${UPLOAD_INTERVAL} epochs (${EPOCHS} total)"
+
+CKPT_DIR="${REPO_DIR}/experiments_with_ltcs/tf_sessions/${EXPERIMENT}"
+
+# ── Background epoch watcher for periodic GCS uploads ─────────────
+# Monitors training log for epoch completions and uploads at intervals.
+# Provides progress visibility and spot instance recoverability.
+(
+    LAST_UPLOADED=0
+    while true; do
+        sleep 30
+        # Parse latest epoch number from training log
+        CURRENT_EPOCH=$(grep 'Epochs ' "${LOG_FILE}" 2>/dev/null | tail -1 | sed 's/Epochs \([0-9]*\).*/\1/')
+        [ -z "${CURRENT_EPOCH}" ] && continue
+
+        # Check if we've crossed an upload threshold
+        NEXT_UPLOAD=$(( LAST_UPLOADED + UPLOAD_INTERVAL ))
+        if [ "${CURRENT_EPOCH}" -ge "${NEXT_UPLOAD}" ]; then
+            echo "  [periodic-upload] Epoch ${CURRENT_EPOCH}: uploading to GCS..."
+            # Upload training log
+            gcloud storage cp "${LOG_FILE}" "${RESULT_PATH}/training_log.txt" 2>/dev/null || true
+            # Upload checkpoints (all: init, periodic, best, latest)
+            if [ -d "${CKPT_DIR}" ]; then
+                gcloud storage cp "${CKPT_DIR}/"*.* "${RESULT_PATH}/checkpoint/" 2>/dev/null || true
+                [ -f "${CKPT_DIR}/checkpoint" ] && \
+                    gcloud storage cp "${CKPT_DIR}/checkpoint" "${RESULT_PATH}/checkpoint/" 2>/dev/null || true
+            fi
+            # Upload result CSV if it exists yet
+            RESULT_DIR="${REPO_DIR}/experiments_with_ltcs/results/${EXPERIMENT}"
+            if [ -d "${RESULT_DIR}" ]; then
+                gcloud storage cp "${RESULT_DIR}/"*.csv "${RESULT_PATH}/" 2>/dev/null || true
+            fi
+            # Write progress marker
+            echo "{\"epoch\": ${CURRENT_EPOCH}, \"total_epochs\": ${EPOCHS}, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > /tmp/progress.json
+            gcloud storage cp /tmp/progress.json "${RESULT_PATH}/" 2>/dev/null || true
+            LAST_UPLOADED=${CURRENT_EPOCH}
+            echo "  [periodic-upload] Upload complete at epoch ${CURRENT_EPOCH}"
+        fi
+    done
+) &
+WATCHER_PID=$!
+echo "  Background upload watcher started (PID: ${WATCHER_PID})"
+
 TRAIN_START=$(date +%s)
 
 cd "${REPO_DIR}/experiments_with_ltcs"
@@ -147,6 +198,10 @@ ${TRAIN_CMD}
 TRAIN_EXIT=$?
 TRAIN_END=$(date +%s)
 TRAIN_DURATION=$(( TRAIN_END - TRAIN_START ))
+
+# Stop the background watcher
+kill ${WATCHER_PID} 2>/dev/null || true
+wait ${WATCHER_PID} 2>/dev/null || true
 
 echo ""
 echo "  Training exit code: ${TRAIN_EXIT}"
