@@ -106,23 +106,44 @@ def _fmt_sigfigs(val, n=3):
     return f"{val:.{digits}f}"
 
 
+def _fmt_partial(base, n, max_n):
+    """Append (n=X) annotation when not all seeds are finished."""
+    if n < max_n:
+        return f"{base} (n={n})"
+    return base
+
+
 def _get_metric(exp):
-    """Return (metric_name, csv_key, format_fn) for each experiment."""
+    """Return (metric_name, csv_key, format_fn) for each experiment.
+    format_fn(mean, std, n, max_n) -> formatted string.
+    """
     if exp in ("ozone", "ozone_fixed"):
-        return "F1-score", "test accuracy", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+        def fmt(m, s, n, mn):
+            base = f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+            return _fmt_partial(base, n, mn)
+        return "F1-score", "test accuracy", fmt
     elif exp in CLASSIFICATION:
-        return "accuracy", "test accuracy", lambda m, s: f"{m:.2f}% ± {s:.2f}" if s else f"{m:.2f}%"
+        def fmt(m, s, n, mn):
+            base = f"{m:.2f}% ± {s:.2f}" if s else f"{m:.2f}%"
+            return _fmt_partial(base, n, mn)
+        return "accuracy", "test accuracy", fmt
     elif exp in REGRESSION:
         metric = "MSE" if exp == "cheetah" else "squared error"
-        return metric, "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
-    return "loss", "test loss", lambda m, s: f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+        def fmt(m, s, n, mn):
+            base = f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+            return _fmt_partial(base, n, mn)
+        return metric, "test loss", fmt
+    def fmt(m, s, n, mn):
+        base = f"{_fmt_sigfigs(m)} ± {_fmt_sigfigs(s)}" if s else _fmt_sigfigs(m)
+        return _fmt_partial(base, n, mn)
+    return "loss", "test loss", fmt
 
 
 # Experiments where higher is better
 HIGHER_IS_BETTER = CLASSIFICATION  # accuracy & F1
 
 
-def _build_rows(results):
+def _build_rows(results, max_seeds=5):
     """Build table data rows: list of (exp, metric_name, [cell_strings], [raw_means])."""
     rows = []
     for exp in EXPERIMENTS:
@@ -134,9 +155,10 @@ def _build_rows(results):
             if key in results:
                 seeds = results[key]
                 vals = [float(s.get(csv_key, 0)) for s in seeds]
-                mean = sum(vals) / len(vals)
-                std = statistics.stdev(vals) if len(vals) > 1 else None
-                cells.append(fmt_fn(mean, std))
+                n = len(vals)
+                mean = sum(vals) / n
+                std = statistics.stdev(vals) if n > 1 else None
+                cells.append(fmt_fn(mean, std, n, max_seeds))
                 raw_means.append(mean)
             else:
                 cells.append("—")
@@ -158,10 +180,10 @@ def _best_index(exp, raw_means):
 
 # ── Plain-text table (terminal) ──────────────────────────────────────
 
-def format_plain(results):
+def format_plain(results, num_seeds=5):
     """Format results as plain-text table for terminal output."""
     lines = []
-    cw = 20
+    cw = 24
 
     lines.append("")
     lines.append("=" * (22 + cw * len(MODELS)))
@@ -172,7 +194,7 @@ def format_plain(results):
     lines.append(header)
     lines.append("-" * len(header))
 
-    for exp, metric_name, cells, raw_means in _build_rows(results):
+    for exp, metric_name, cells, raw_means in _build_rows(results, max_seeds=num_seeds):
         best = _best_index(exp, raw_means)
         parts = []
         for i, c in enumerate(cells):
@@ -213,7 +235,7 @@ def format_markdown(results, run_name="", num_seeds=1):
     lines.append(header)
     lines.append(sep)
 
-    for exp, metric_name, cells, raw_means in _build_rows(results):
+    for exp, metric_name, cells, raw_means in _build_rows(results, max_seeds=num_seeds):
         best = _best_index(exp, raw_means)
         styled = []
         for i, c in enumerate(cells):
@@ -279,7 +301,7 @@ def main():
     print(f"\n  Found {found}/{total} experiment results")
 
     # Print plain-text table to terminal
-    for line in format_plain(results):
+    for line in format_plain(results, num_seeds=args.seeds):
         print(line)
 
     # Save outputs
