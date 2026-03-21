@@ -293,7 +293,22 @@ def main():
         with open(md_file, "w") as f:
             f.write("\n".join(md_lines) + "\n")
         print(f"  Markdown saved to {md_file}")
-        print(f"    → PDF: pandoc {md_file} -o {os.path.join(out_dir, 'results.pdf')}")
+
+        # Generate PDF (extra-wide landscape for 15-model table)
+        pdf_file = os.path.join(out_dir, "results.pdf")
+        try:
+            subprocess.run([
+                "pandoc", md_file, "-o", pdf_file,
+                "-V", "geometry:paperwidth=22in",
+                "-V", "geometry:paperheight=11in",
+                "-V", "geometry:margin=0.5in",
+                "-V", "fontsize=8pt",
+            ], check=True, capture_output=True, text=True, timeout=30)
+            print(f"  PDF saved to {pdf_file}")
+        except FileNotFoundError:
+            print(f"  PDF skipped (pandoc not installed)")
+        except subprocess.CalledProcessError as e:
+            print(f"  PDF failed: {e.stderr.strip()}")
 
         # Save data CSV
         csv_file = args.csv or os.path.join(out_dir, "results.csv")
