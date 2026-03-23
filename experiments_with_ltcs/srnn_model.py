@@ -169,7 +169,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                  n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0,
                  ode_solver_unfolds=6, h=1.0/400.0,
                  solver="semi_implicit", readout="synaptic",
-                 per_neuron=False, dales=False):
+                 per_neuron=False, dales=False, indegree=None):
         super(SRNNCell, self).__init__()
         self._num_units = num_units
         self._n_E = n_E if n_E is not None else num_units
@@ -184,6 +184,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         self._readout = readout
         self._per_neuron = per_neuron
         self._dales = dales
+        self._indegree = indegree  # None → full connectivity
 
         # Compute total state dimension
         self._state_dim = (
@@ -241,16 +242,25 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         # ── Core weights ──
         if self._dales:
             # RMT initialization: inv_softplus(|W_rmt|), clamped
-            indegree = min(n, max(1, n))  # full connectivity for small n
+            indegree = self._indegree if self._indegree is not None else n
             f = float(n_E) / float(n)
             W_rmt, _, _ = generate_rmt_matrix(n, indegree, f)
+
+            # Sparsity mask: non-trainable, fixed throughout training
+            S_mask = (W_rmt != 0.0).astype(np.float32)
+            self.W_mask = tf.Variable(
+                S_mask, trainable=False, name='W_mask', dtype=tf.float32)
+
             W_abs = np.abs(W_rmt)
-            # inv_softplus: log(exp(x) - 1), clamp to avoid extremes
-            W_raw = np.clip(np.log(np.exp(W_abs.astype(np.float64)) - 1.0),
-                            -10.0, 10.0).astype(np.float32)
+            # Zero entries → set raw weight to 0 (softplus(0) ≈ 0.693, but mask kills it)
+            safe_W = np.where(W_abs > 0,
+                              np.clip(np.log(np.exp(W_abs.astype(np.float64)) - 1.0),
+                                      -10.0, 10.0),
+                              0.0).astype(np.float32)
             self.W = tf.get_variable(
-                'W', initializer=W_raw, dtype=tf.float32)
+                'W', initializer=safe_W, dtype=tf.float32)
         else:
+            self.W_mask = None
             self.W = tf.get_variable(
                 'W', [n, n],
                 initializer=tf.initializers.random_normal(stddev=sigma_w),
@@ -494,6 +504,20 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         b = self._extract_b(parts)
         return b * r
 
+    # ── Effective W (Dale's + sparsity mask) ────────────────────────────
+
+    def _get_W_eff(self):
+        """Compute effective recurrent weight matrix.
+
+        Applies Dale's law (softplus for E, -softplus for I columns),
+        then multiplies by the fixed sparsity mask if present.
+        """
+        n_E = self._n_E
+        W_eff = _apply_dales(self.W, n_E) if self._dales else self.W
+        if self.W_mask is not None:
+            W_eff = W_eff * self.W_mask
+        return W_eff
+
     # ── Semi-implicit (fused) solver step ────────────────────────────────
 
     def _fused_step(self, parts, u):
@@ -520,7 +544,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         br = b * r  # (batch, n)
 
         # ── Fused x update ──
-        W_eff = _apply_dales(self.W, n_E) if self._dales else self.W
+        W_eff = self._get_W_eff()
         tau_d = tf.nn.softplus(self.log_tau_d)  # (1,) or (n,)
         alpha_x = Δt / tau_d
         # W @ br: (batch, n) @ (n, n)^T → use matmul with W transposed
@@ -589,7 +613,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         br = b * r
 
         # dx/dt
-        W_eff = _apply_dales(self.W, n_E) if self._dales else self.W
+        W_eff = self._get_W_eff()
         tau_d = tf.nn.softplus(self.log_tau_d)
         Wbr = tf.matmul(br, W_eff, transpose_b=True)
         dx_dt = (-x + Wbr + u) / tau_d
