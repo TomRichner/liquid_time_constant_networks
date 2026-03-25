@@ -8,6 +8,9 @@ tf.disable_v2_behavior()
 import ltc_model as ltc
 from ctrnn_model import CTRNN, NODE, CTGRU
 from srnn_model import SRNNCell
+from io_masks import generate_neuron_partition, make_input_row_mask, make_output_mask
+from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
+from time_stretch import stretch_batch, random_stretch_factor
 import argparse
 import pandas as pd
 
@@ -88,9 +91,22 @@ class OccupancyModel:
         self.constrain_op = []
         self.sparsity_level = sparsity_level
         self.batch_size = batch_size
-        self.x = tf.placeholder(dtype=tf.float32,shape=[None,None,5])
-        self.target_y = tf.placeholder(dtype=tf.int32,shape=[None,None])
 
+        # ── I/O masks ──
+        mask_seed = seed if seed is not None else 0
+        input_idx, inter_idx, output_idx = generate_neuron_partition(
+            model_size, mask_seed)
+        W_in_mask_np = make_input_row_mask(model_size, input_idx)
+        W_out_mask_np = make_output_mask(model_size, output_idx)
+        self._W_in_mask = tf.constant(W_in_mask_np, dtype=tf.float32, name="W_in_mask")
+        self._W_out_mask = tf.constant(W_out_mask_np, dtype=tf.float32, name="W_out_mask")
+        print(f"  I/O masks: {len(input_idx)} input, {len(inter_idx)} inter, {len(output_idx)} output")
+        self.x = tf.placeholder(dtype=tf.float32,shape=[None,None,5])
+        self.target_y = tf.placeholder(dtype=tf.int32, shape=[None])
+
+
+        self.readout_idx = tf.placeholder(dtype=tf.int32, shape=[], name="readout_idx")
+        self.bptt_start_idx = tf.placeholder(dtype=tf.int32, shape=[], name="bptt_start_idx")
         self.model_size = model_size
         head = self.x
         if(model_type == "lstm"):
@@ -98,7 +114,7 @@ class OccupancyModel:
 
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type.startswith("ltc")):
-            self.wm = ltc.LTCCell(model_size)
+            self.wm = ltc.LTCCell(model_size, W_in_mask=self._W_in_mask)
             if(model_type.endswith("_rk")):
                 self.wm._solver = ltc.ODESolver.RungeKutta
             elif(model_type.endswith("_ex")):
@@ -109,66 +125,77 @@ class OccupancyModel:
             head,_ = tf.nn.dynamic_rnn(self.wm,head,dtype=tf.float32,time_major=True)
             self.constrain_op = self.wm.get_param_constrain_op()
         elif(model_type == "node"):
-            self.fused_cell = NODE(model_size,cell_clip=-1)
+            self.fused_cell = NODE(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctgru"):
-            self.fused_cell = CTGRU(model_size,cell_clip=-1)
+            self.fused_cell = CTGRU(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctrnn"):
-            self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True)
+            self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "hopf"):
-            self.fused_cell = SRNNCell(model_size, n_E=model_size)
+            self.fused_cell = SRNNCell(model_size, n_E=model_size,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn"):
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-per-neuron"):
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt-no-dales"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=False)
+                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=False,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-sfa-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-std-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-E-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-per-neuron"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
@@ -179,7 +206,10 @@ class OccupancyModel:
             else:
                 self.constrain_op.extend(self.get_sparsity_ops())
 
-        self.y = tf.layers.Dense(2,activation=None)(head)
+        # ── Single-timestep readout ──
+        head_at_readout = head[self.readout_idx]
+        masked_state = head_at_readout * self._W_out_mask
+        self.y = tf.layers.Dense(2, activation=None, name="dense_readout")(masked_state)
         print("logit shape: ",str(self.y.shape))
         self.loss = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(
             labels = self.target_y,
@@ -194,7 +224,7 @@ class OccupancyModel:
         else:
             self.train_step = optimizer.minimize(self.loss)
 
-        model_prediction = tf.argmax(input=self.y, axis=2)
+        model_prediction = tf.argmax(input=self.y, axis=1)
         self.accuracy = tf.reduce_mean(tf.cast(tf.equal(model_prediction, tf.cast(self.target_y,tf.int64)), tf.float32))
 
         self.sess = tf.InteractiveSession()
@@ -328,6 +358,20 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size',default=16,type=int)
 
     parser.add_argument('--seed',default=None,type=int)
+
+    # New refactor args
+    parser.add_argument('--solver',default="semi_implicit",type=str,
+                        help="ODE solver: semi_implicit, explicit, rk4, exponential")
+    parser.add_argument('--h',default=0.0025,type=float,
+                        help="ODE step size")
+    parser.add_argument('--min_loops',default=5,type=int,
+                        help="Min palindrome fwd+bwd loop pairs")
+    parser.add_argument('--min_loop_len',default=500,type=int,
+                        help="Min total looped sequence length")
+    parser.add_argument('--stretch_lo',default=1.0,type=float,
+                        help="Min time-stretch factor (1.0 = disabled)")
+    parser.add_argument('--stretch_hi',default=1.0,type=float,
+                        help="Max time-stretch factor (1.0 = disabled)")
 
     args = parser.parse_args()
 

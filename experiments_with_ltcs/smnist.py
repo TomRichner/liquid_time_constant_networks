@@ -8,6 +8,9 @@ tf.disable_v2_behavior()
 import ltc_model as ltc
 from ctrnn_model import CTRNN, NODE, CTGRU
 from srnn_model import SRNNCell
+from io_masks import generate_neuron_partition, make_input_row_mask, make_output_mask
+from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
+from time_stretch import stretch_batch, random_stretch_factor
 import argparse
 import pandas as pd
 
@@ -57,13 +60,27 @@ class SMnistData:
 
 class SMnistModel:
 
-    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16):
+    def __init__(self,model_type,model_size,learning_rate = 0.001,batch_size=16,
+                 seed=None, solver="semi_implicit", h=0.0025):
         self.model_type = model_type
         self.constrain_op = None
         self.batch_size = batch_size
+
+        # ── I/O masks ──
+        mask_seed = seed if seed is not None else 0
+        input_idx, inter_idx, output_idx = generate_neuron_partition(
+            model_size, mask_seed)
+        W_in_mask_np = make_input_row_mask(model_size, input_idx)
+        W_out_mask_np = make_output_mask(model_size, output_idx)
+        self._W_in_mask = tf.constant(W_in_mask_np, dtype=tf.float32, name="W_in_mask")
+        self._W_out_mask = tf.constant(W_out_mask_np, dtype=tf.float32, name="W_out_mask")
+        print(f"  I/O masks: {len(input_idx)} input, {len(inter_idx)} inter, {len(output_idx)} output")
         self.x = tf.placeholder(dtype=tf.float32,shape=[28,None,28])
         self.target_y = tf.placeholder(dtype=tf.int32,shape=[None])
 
+
+        self.readout_idx = tf.placeholder(dtype=tf.int32, shape=[], name="readout_idx")
+        self.bptt_start_idx = tf.placeholder(dtype=tf.int32, shape=[], name="bptt_start_idx")
         self.model_size = model_size
         head = self.x
         if(model_type == "lstm"):
@@ -71,7 +88,7 @@ class SMnistModel:
 
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type.startswith("ltc")):
-            self.wm = ltc.LTCCell(model_size)
+            self.wm = ltc.LTCCell(model_size, W_in_mask=self._W_in_mask)
             if(model_type.endswith("_rk")):
                 self.wm._solver = ltc.ODESolver.RungeKutta
             elif(model_type.endswith("_ex")):
@@ -82,66 +99,77 @@ class SMnistModel:
             head,_ = tf.nn.dynamic_rnn(self.wm,head,dtype=tf.float32,time_major=True)
             self.constrain_op = self.wm.get_param_constrain_op()
         elif(model_type == "node"):
-            self.fused_cell = NODE(model_size,cell_clip=-1)
+            self.fused_cell = NODE(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctgru"):
-            self.fused_cell = CTGRU(model_size,cell_clip=-1)
+            self.fused_cell = CTGRU(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctrnn"):
-            self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True)
+            self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True,W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "hopf"):
-            self.fused_cell = SRNNCell(model_size, n_E=model_size)
+            self.fused_cell = SRNNCell(model_size, n_E=model_size,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn"):
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-per-neuron"):
             n_E = model_size // 2  # 50% excitatory
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True)
+                n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt-no-dales"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=False)
+                n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=False,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-sfa-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-std-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-E-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-per-neuron"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
-                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True)
+                n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True,
+                solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
@@ -149,7 +177,10 @@ class SMnistModel:
         print("head.shape: ",str(head.shape))
         unstack_head = tf.unstack(head,axis=0)
         head = unstack_head[-1]
-        self.y = tf.layers.Dense(10,activation=None)(head)
+        # ── Single-timestep readout ──
+        head_at_readout = head[self.readout_idx]
+        masked_state = head_at_readout * self._W_out_mask
+        self.y = tf.layers.Dense(10, activation=None, name="dense_readout")(masked_state)
         print("logit shape: ",str(self.y.shape))
         self.loss = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(
             labels = self.target_y,
@@ -270,6 +301,20 @@ if __name__ == "__main__":
     parser.add_argument('--lr',default=0.001,type=float)
     parser.add_argument('--batch_size',default=16,type=int)
     parser.add_argument('--seed',default=None,type=int)
+    # New refactor args
+    parser.add_argument('--solver',default="semi_implicit",type=str,
+                        help="ODE solver: semi_implicit, explicit, rk4, exponential")
+    parser.add_argument('--h',default=0.0025,type=float,
+                        help="ODE step size")
+    parser.add_argument('--min_loops',default=5,type=int,
+                        help="Min palindrome fwd+bwd loop pairs")
+    parser.add_argument('--min_loop_len',default=500,type=int,
+                        help="Min total looped sequence length")
+    parser.add_argument('--stretch_lo',default=1.0,type=float,
+                        help="Min time-stretch factor (1.0 = disabled)")
+    parser.add_argument('--stretch_hi',default=1.0,type=float,
+                        help="Max time-stretch factor (1.0 = disabled)")
+
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -277,7 +322,8 @@ if __name__ == "__main__":
         tf.set_random_seed(args.seed)
 
     occ_data = SMnistData()
-    model = SMnistModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size)
+    model = SMnistModel(model_type = args.model,model_size=args.size,learning_rate=args.lr,batch_size=args.batch_size,
+                     seed=args.seed, solver=args.solver, h=args.h)
 
     model.fit(occ_data,epochs=args.epochs,log_period=args.log)
 
