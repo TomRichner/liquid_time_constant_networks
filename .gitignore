@@ -13,6 +13,8 @@ __pycache__/
 uv.lock
 
 # Local temp (GCS downloads, scratch data)
+tmp/
+!tmp/**/*.py
 
 # OS
 .DS_Store

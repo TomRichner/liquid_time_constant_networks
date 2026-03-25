@@ -20,36 +20,21 @@ All in `experiments_with_ltcs/`:
 ### Phase 3: Lyapunov Module (✅ complete)
 - **`lyapunov.py`** — Benettin's algorithm ported from Julia. Numpy-based. HDF5 save with float16 + gzip(level=1) + shuffle compression. ⚠️ Not yet integrated into experiment scripts.
 
-### Phase 4: Experiment Integration (🔶 partial)
-- **`har.py`** — Fully refactored as template:
-  - I/O masks (W_in_mask passed to all model constructors, W_out_mask applied before Dense readout)
-  - Single-timestep readout via `head[readout_idx] * W_out_mask → Dense(6)`
-  - `iterate_train()` now yields `(batch_x, batch_y, readout_idx, bptt_start_idx)` with time-stretch + palindrome looping + random windowing
-  - `iterate_eval()` with palindrome loops, readout at end
-  - New CLI args: `--solver`, `--h`, `--min_loops`, `--min_loop_len`, `--stretch_lo`, `--stretch_hi`
-  - `target_y` placeholder changed from `[None,None]` to `[None]` (single timestep)
+### Phase 4: Experiment Integration (✅ complete)
+- **`har.py`** — Fully refactored as template (see above)
+- **All 8 remaining experiments** ported with same pattern: gesture, occupancy, smnist, traffic, power, ozone_fixed, person, cheetah
+  - Each has: I/O masks, W_in_mask on all constructors, single-timestep readout with W_out_mask, solver/h CLI args
+  - Regression experiments (traffic, power, cheetah) use `tf.squeeze` after Dense(1) for scalar output
 
 ---
 
 ## What's Remaining
 
-### Phase 4 continued: Port to remaining 8 experiments
-Same pattern as har.py. Key differences per experiment:
-| Experiment | Task | Input dim | Classes/Targets | Notes |
-|---|---|---|---|---|
-| gesture | classification | 32 | 5 | Per-timestep labels |
-| occupancy | classification | 5 | 2 | Per-timestep labels |
-| smnist | classification | 28 | 10 | **Single label** per sequence — same label at any readout |
-| traffic | regression (MAE) | 4 | 1 | Per-timestep targets (float) |
-| power | regression (MAE) | 7 | 1 | Per-timestep targets (float) |
-| ozone_fixed | classification | 72 | 2 | Per-timestep labels |
-| person | classification | 24 | 7 | Per-timestep labels, per-person time series |
-| cheetah | regression (MSE/MAE) | 17 | 17 | Vector autoregression |
-
-### Phase 4b: Integrate trainable IC + Lyapunov calls
+### Phase 4b: Integrate trainable IC + Lyapunov calls into experiment scripts
 - Add `create_trainable_ic()` call after session init, pass IC to `dynamic_rnn`
 - Add `compute_lyapunov_at_checkpoint()` call at checkpoints in `fit()`
 - BPTT truncation via `tf.stop_gradient` at `bptt_start_idx` — needs TF graph-level work
+- Update `iterate_train()` in each Data class to apply palindrome looping + time stretch + random windowing
 
 ### Phase 5: VM Image Rebuild
 - Add `h5py` and `scipy` to pip install in `cloud/build_image.sh`
