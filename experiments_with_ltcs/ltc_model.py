@@ -19,7 +19,7 @@ class ODESolver(Enum):
 
 class LTCCell(tf.nn.rnn_cell.RNNCell):
 
-    def __init__(self, num_units):
+    def __init__(self, num_units, W_in_mask=None):
 
         self._input_size = -1
         self._num_units = num_units
@@ -32,6 +32,7 @@ class LTCCell(tf.nn.rnn_cell.RNNCell):
         self._input_mapping = MappingType.Affine
 
         self._erev_init_factor = 1
+        self._W_in_mask = W_in_mask  # (n,) binary mask or None
 
         self._w_init_max = 1.0
         self._w_init_min = 0.01
@@ -151,6 +152,9 @@ class LTCCell(tf.nn.rnn_cell.RNNCell):
         v_pre = state
 
         sensory_w_activation = self.sensory_W*self._sigmoid(inputs,self.sensory_mu,self.sensory_sigma)
+        # Apply W_in_mask: zero sensory connections to non-input neurons
+        if self._W_in_mask is not None:
+            sensory_w_activation = sensory_w_activation * tf.reshape(self._W_in_mask, [1, 1, -1])
         sensory_rev_activation = sensory_w_activation*self.sensory_erev
 
         w_numerator_sensory = tf.reduce_sum(sensory_rev_activation,axis=1)
@@ -176,6 +180,8 @@ class LTCCell(tf.nn.rnn_cell.RNNCell):
 
         # We can pre-compute the effects of the sensory neurons here
         sensory_w_activation = self.sensory_W*self._sigmoid(inputs,self.sensory_mu,self.sensory_sigma)
+        if self._W_in_mask is not None:
+            sensory_w_activation = sensory_w_activation * tf.reshape(self._W_in_mask, [1, 1, -1])
         w_reduced_sensory = tf.reduce_sum(sensory_w_activation,axis=1)
 
         # Unfold the mutliply ODE multiple times into one RNN step
@@ -210,6 +216,8 @@ class LTCCell(tf.nn.rnn_cell.RNNCell):
 
         # We can pre-compute the effects of the sensory neurons here
         sensory_w_activation = self.sensory_W*self._sigmoid(inputs,self.sensory_mu,self.sensory_sigma)
+        if self._W_in_mask is not None:
+            sensory_w_activation = sensory_w_activation * tf.reshape(self._W_in_mask, [1, 1, -1])
         w_reduced_sensory = tf.reduce_sum(sensory_w_activation,axis=1)
 
 

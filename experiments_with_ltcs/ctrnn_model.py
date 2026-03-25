@@ -7,7 +7,8 @@ import os
 
 class CTRNN(tf.nn.rnn_cell.RNNCell):
 
-    def __init__(self, num_units,cell_clip=-1,global_feedback=False,fix_tau=True):
+    def __init__(self, num_units,cell_clip=-1,global_feedback=False,fix_tau=True,
+                 W_in_mask=None):
         self._num_units = num_units
         # Number of ODE solver steps
         self._unfolds = 6
@@ -21,6 +22,7 @@ class CTRNN(tf.nn.rnn_cell.RNNCell):
         self.fix_tau = fix_tau
         self.tau = 1
         self.cell_clip = cell_clip
+        self._W_in_mask = W_in_mask  # (n,) binary mask or None
 
 
     @property
@@ -84,11 +86,16 @@ class CTRNN(tf.nn.rnn_cell.RNNCell):
                 # Input Option 1: RNNCell input
                 if(not self.global_feedback):
                     input_f_prime = self._dense(units=self._num_units,inputs=inputs,activation=tf.nn.tanh,name="step")
+                    # Apply W_in_mask: zero activations for non-input neurons
+                    if self._W_in_mask is not None:
+                        input_f_prime = input_f_prime * self._W_in_mask
                 for i in range(self._unfolds):
                     # Input Option 2: RNNCell input AND RNN state
                     if(self.global_feedback):
                         fused_input = tf.concat([inputs,state],axis=-1)
                         input_f_prime = self._dense(units=self._num_units,inputs=fused_input,activation=tf.nn.tanh,name="step")
+                        if self._W_in_mask is not None:
+                            input_f_prime = input_f_prime * self._W_in_mask
 
                     # df/dt 
                     f_prime = -state/self.tau + input_f_prime
@@ -106,7 +113,7 @@ class CTRNN(tf.nn.rnn_cell.RNNCell):
 
 class NODE(tf.nn.rnn_cell.RNNCell):
 
-    def __init__(self, num_units,cell_clip=-1):
+    def __init__(self, num_units,cell_clip=-1,W_in_mask=None):
         self._num_units = num_units
         # Number of ODE solver steps
         self._unfolds = 6
@@ -115,6 +122,7 @@ class NODE(tf.nn.rnn_cell.RNNCell):
         self._delta_t = 0.1
 
         self.cell_clip = cell_clip
+        self._W_in_mask = W_in_mask  # (n,) binary mask or None
 
 
     @property
@@ -165,6 +173,9 @@ class NODE(tf.nn.rnn_cell.RNNCell):
     def _f_prime(self,inputs,state):
         fused_input = tf.concat([inputs,state],axis=-1)
         input_f_prime = self._dense(units=self._num_units,inputs=fused_input,activation=tf.nn.tanh,name="step")
+        # Apply W_in_mask: zero activations for non-input neurons
+        if self._W_in_mask is not None:
+            input_f_prime = input_f_prime * self._W_in_mask
         return input_f_prime
 
     def _dense(self,units,inputs,activation,name,bias_initializer=tf.constant_initializer(0.0)):
@@ -199,10 +210,11 @@ class NODE(tf.nn.rnn_cell.RNNCell):
 
 class CTGRU(tf.nn.rnn_cell.RNNCell):
     # https://arxiv.org/abs/1710.04110
-    def __init__(self, num_units,M=8,cell_clip=-1):
+    def __init__(self, num_units,M=8,cell_clip=-1,W_in_mask=None):
         self._num_units = num_units
         self.M = M
         self.cell_clip = cell_clip
+        self._W_in_mask = W_in_mask  # (n,) binary mask or None
         self.ln_tau_table = np.empty(self.M)
         tau = 1
         for i in range(self.M):
@@ -251,6 +263,9 @@ class CTGRU(tf.nn.rnn_cell.RNNCell):
                 q_input = tf.reduce_sum(rki*h_hat,axis=2)
                 reset_value = tf.concat([inputs,q_input],axis=1)
                 qk = self._dense(units=self._num_units,inputs=reset_value,activation=tf.nn.tanh,name="detect_signal")
+                # Apply W_in_mask: zero activations for non-input neurons
+                if self._W_in_mask is not None:
+                    qk = qk * self._W_in_mask
 
                 qk = tf.reshape(qk,[-1,self._num_units,1]) # in order to broadcast
 

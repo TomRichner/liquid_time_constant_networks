@@ -169,7 +169,8 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                  n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0,
                  ode_solver_unfolds=6, h=1.0/400.0,
                  solver="semi_implicit", readout="synaptic",
-                 per_neuron=False, dales=False, indegree=None):
+                 per_neuron=False, dales=False, indegree=None,
+                 W_in_mask=None):
         super(SRNNCell, self).__init__()
         self._num_units = num_units
         self._n_E = n_E if n_E is not None else num_units
@@ -185,6 +186,7 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
         self._per_neuron = per_neuron
         self._dales = dales
         self._indegree = indegree  # None → full connectivity
+        self._W_in_mask = W_in_mask  # (n,) binary mask or None
 
         # Compute total state dimension
         self._state_dim = (
@@ -660,6 +662,137 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
 
         return state_flat + Δt * dS_dt
 
+    def _compute_rhs_flat(self, state_flat, u):
+        """Compute dS/dt as a flat vector. Used by RK4 and other methods."""
+        parts = self._unpack_state(state_flat)
+        x = parts['x']
+        n = self._num_units
+        n_E, n_I = self._n_E, self._n_I
+        n_a_E, n_a_I = self._n_a_E, self._n_a_I
+        Δt = self._h  # Not used here — just computing the derivative
+
+        x_eff = self._compute_x_eff(parts)
+        r = piecewise_sigmoid(x_eff - self.a_0)
+        b = self._extract_b(parts)
+        br = b * r
+
+        W_eff = self._get_W_eff()
+        tau_d = tf.nn.softplus(self.log_tau_d)
+        Wbr = tf.matmul(br, W_eff, transpose_b=True)
+        dx_dt = (-x + Wbr + u) / tau_d
+
+        dS_pieces = []
+
+        if n_a_E > 0 and parts['a_E'] is not None:
+            tau_a_E_raw = self._get_tau_a('E')
+            tau_a_E = tf.reshape(tau_a_E_raw, [1, -1, n_a_E])
+            r_E = tf.reshape(r[:, :n_E], [-1, n_E, 1])
+            c_0_E = tf.reshape(self.c_0_E, [1, -1, 1])
+            da_E_dt = (c_0_E + r_E - parts['a_E']) / tau_a_E
+            dS_pieces.append(tf.reshape(da_E_dt, [-1, n_E * n_a_E]))
+
+        if n_a_I > 0 and parts['a_I'] is not None:
+            tau_a_I_raw = self._get_tau_a('I')
+            tau_a_I = tf.reshape(tau_a_I_raw, [1, -1, n_a_I])
+            r_I = tf.reshape(r[:, n_E:], [-1, n_I, 1])
+            c_0_I = tf.reshape(self.c_0_I, [1, -1, 1])
+            da_I_dt = (c_0_I + r_I - parts['a_I']) / tau_a_I
+            dS_pieces.append(tf.reshape(da_I_dt, [-1, n_I * n_a_I]))
+
+        if self._n_b_E > 0 and parts['b_E'] is not None:
+            tau_b_rec = tf.nn.softplus(self.log_tau_b_E_rec)
+            tau_b_rel = tf.nn.softplus(self.log_tau_b_E_rel)
+            r_E = r[:, :n_E]
+            db_E_dt = (1.0 - parts['b_E']) / tau_b_rec - (parts['b_E'] * r_E) / tau_b_rel
+            dS_pieces.append(db_E_dt)
+
+        if self._n_b_I > 0 and parts['b_I'] is not None:
+            tau_b_rec = tf.nn.softplus(self.log_tau_b_I_rec)
+            tau_b_rel = tf.nn.softplus(self.log_tau_b_I_rel)
+            r_I = r[:, n_E:]
+            db_I_dt = (1.0 - parts['b_I']) / tau_b_rec - (parts['b_I'] * r_I) / tau_b_rel
+            dS_pieces.append(db_I_dt)
+
+        dS_pieces.append(dx_dt)
+        return tf.concat(dS_pieces, axis=1)
+
+    # ── RK4 step ─────────────────────────────────────────────────────────
+
+    def _rk4_step(self, state_flat, u):
+        """One RK4 sub-step on the flat state vector."""
+        Δt = self._h
+        k1 = Δt * self._compute_rhs_flat(state_flat, u)
+        k2 = Δt * self._compute_rhs_flat(state_flat + 0.5 * k1, u)
+        k3 = Δt * self._compute_rhs_flat(state_flat + 0.5 * k2, u)
+        k4 = Δt * self._compute_rhs_flat(state_flat + k3, u)
+        return state_flat + (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+
+    # ── Exponential Euler step ────────────────────────────────────────────
+
+    def _exponential_step(self, parts, u):
+        """One exponential Euler sub-step.
+
+        Exact for the linear decay part:
+          x_new = x * exp(-α) + (1 - exp(-α)) * (u + W·br)
+        where α = Δt/τ_d.
+
+        SFA and STD use the same fused (semi-implicit) scheme since they
+        are already stable for reasonable step sizes.
+        """
+        n = self._num_units
+        n_E, n_I = self._n_E, self._n_I
+        n_a_E, n_a_I = self._n_a_E, self._n_a_I
+        Δt = self._h
+
+        x = parts['x']
+        x_eff = self._compute_x_eff(parts)
+        r = piecewise_sigmoid(x_eff - self.a_0)
+        b = self._extract_b(parts)
+        br = b * r
+
+        # Exponential x update
+        W_eff = self._get_W_eff()
+        tau_d = tf.nn.softplus(self.log_tau_d)
+        alpha_x = Δt / tau_d
+        exp_neg_alpha = tf.exp(-alpha_x)
+        Wbr = tf.matmul(br, W_eff, transpose_b=True)
+        x_new = x * exp_neg_alpha + (1.0 - exp_neg_alpha) * (u + Wbr)
+
+        new_parts = {'x': x_new, 'a_E': None, 'a_I': None, 'b_E': None, 'b_I': None}
+
+        # SFA and STD use fused (semi-implicit) scheme
+        if n_a_E > 0 and parts['a_E'] is not None:
+            tau_a_E_raw = self._get_tau_a('E')
+            tau_a_E = tf.reshape(tau_a_E_raw, [1, -1, n_a_E])
+            alpha_a_E = Δt / tau_a_E
+            r_E = tf.reshape(r[:, :n_E], [-1, n_E, 1])
+            c_0_E = tf.reshape(self.c_0_E, [1, -1, 1])
+            new_parts['a_E'] = (parts['a_E'] + alpha_a_E * (c_0_E + r_E)) / (1.0 + alpha_a_E)
+
+        if n_a_I > 0 and parts['a_I'] is not None:
+            tau_a_I_raw = self._get_tau_a('I')
+            tau_a_I = tf.reshape(tau_a_I_raw, [1, -1, n_a_I])
+            alpha_a_I = Δt / tau_a_I
+            r_I = tf.reshape(r[:, n_E:], [-1, n_I, 1])
+            c_0_I = tf.reshape(self.c_0_I, [1, -1, 1])
+            new_parts['a_I'] = (parts['a_I'] + alpha_a_I * (c_0_I + r_I)) / (1.0 + alpha_a_I)
+
+        if self._n_b_E > 0 and parts['b_E'] is not None:
+            tau_b_rec = tf.nn.softplus(self.log_tau_b_E_rec)
+            tau_b_rel = tf.nn.softplus(self.log_tau_b_E_rel)
+            r_E = r[:, :n_E]
+            new_parts['b_E'] = (parts['b_E'] + Δt / tau_b_rec) / \
+                (1.0 + Δt * (1.0 / tau_b_rec + r_E / tau_b_rel))
+
+        if self._n_b_I > 0 and parts['b_I'] is not None:
+            tau_b_rec = tf.nn.softplus(self.log_tau_b_I_rec)
+            tau_b_rel = tf.nn.softplus(self.log_tau_b_I_rel)
+            r_I = r[:, n_E:]
+            new_parts['b_I'] = (parts['b_I'] + Δt / tau_b_rec) / \
+                (1.0 + Δt * (1.0 / tau_b_rec + r_I / tau_b_rel))
+
+        return new_parts
+
     # ── Main __call__ ────────────────────────────────────────────────────
 
     def __call__(self, inputs, state, scope=None):
@@ -675,7 +808,11 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
 
             # Compute input drive: u = W_in @ input → (batch, n)
             # W_in is (n, n_in), inputs is (batch, n_in) → matmul(inputs, W_in^T)
-            u = tf.matmul(inputs, self.W_in, transpose_b=True)  # (batch, n)
+            W_in_eff = self.W_in
+            if self._W_in_mask is not None:
+                # W_in_mask is (n,) binary — broadcast to (n, n_in)
+                W_in_eff = self.W_in * tf.reshape(self._W_in_mask, [-1, 1])
+            u = tf.matmul(inputs, W_in_eff, transpose_b=True)  # (batch, n)
 
             if self._solver == "semi_implicit":
                 parts = self._unpack_state(state)
@@ -690,8 +827,22 @@ class SRNNCell(tf.nn.rnn_cell.RNNCell):
                 new_state = state_out
                 parts = self._unpack_state(new_state)
                 output = self._compute_readout(parts)
+            elif self._solver == "rk4":
+                state_out = state
+                for _ in range(self._ode_solver_unfolds):
+                    state_out = self._rk4_step(state_out, u)
+                new_state = state_out
+                parts = self._unpack_state(new_state)
+                output = self._compute_readout(parts)
+            elif self._solver == "exponential":
+                parts = self._unpack_state(state)
+                for _ in range(self._ode_solver_unfolds):
+                    parts = self._exponential_step(parts, u)
+                new_state = self._pack_state(parts)
+                output = self._compute_readout(parts)
             else:
-                raise ValueError("Unknown solver: '{}'. Use 'semi_implicit' or 'explicit'".format(
-                    self._solver))
+                raise ValueError(
+                    "Unknown solver: '{}'. Use 'semi_implicit', 'explicit', "
+                    "'rk4', or 'exponential'".format(self._solver))
 
         return output, new_state
