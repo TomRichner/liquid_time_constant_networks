@@ -1,6 +1,6 @@
 ---
 title: "Experiment Results — full300"
-date: "2026-03-22 16:17"
+date: "2026-03-20 02:57 – 2026-03-22 14:47 UTC"
 geometry: landscape,margin=1.5cm
 fontsize: 10pt
 ---
@@ -9,6 +9,11 @@ fontsize: 10pt
 
 Test performance at best validation epoch. Seeds per cell: n=5.
 Paper reference: Hasani et al. 2021, Table 3 (n=5, 200 epochs).
+
+- **Started:** 2026-03-20 02:57 UTC
+- **Completed:** 2026-03-22 14:47 UTC
+- **Wall-clock elapsed:** 2d 11h 50m
+- **Total CPU-hours:** 1636h (256 cells)
 
 | Dataset | Metric | lstm | ctrnn | node | ctgru | ltc | srnn | srnn-per-neuron | srnn-echo | srnn-no-adapt | srnn-no-adapt-no-dales | srnn-sfa-only | srnn-std-only | srnn-E-only | srnn-e-only-echo | srnn-e-only-per-neuron |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -23,4 +28,36 @@ Paper reference: Hasani et al. 2021, Table 3 (n=5, 200 epochs).
 | cheetah | MSE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 *Table: full300 — 5 seed(s) per cell.*
+
+## Median Wall-Clock Duration
+
+| Dataset | lstm | ctrnn | node | ctgru | ltc | srnn | srnn-per-neuron | srnn-echo | srnn-no-adapt | srnn-no-adapt-no-dales | srnn-sfa-only | srnn-std-only | srnn-E-only | srnn-e-only-echo | srnn-e-only-per-neuron |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| har | 28m | 32m | 54m | 34m | 1.3h | 1.2h | 1.0h | 59m | 36m | 34m | 49m | 42m | 55m | 54m | 48m |
+| gesture | 9m | 9m | 14m | 12m | 15m | 36m | 32m | 27m | 13m | 11m | 23m | 15m | 19m | 17m | 23m |
+| occupancy | 38m | 36m | 48m | 36m | 1.1h | 1.3h | 1.2h | 1.2h | 44m | 45m | 53m | 46m | 58m | 56m | 57m |
+| smnist | 44.6h | 42.8h | 46.6h | 46.7h | 49.9h | 52.9h | 53.8h | — | — | — | — | — | — | — | — |
+| traffic | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| power | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| ozone_fixed | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| person | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| cheetah | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+
+*Durations are median across seeds.*
+
+## Median CPU-Hours
+
+| Dataset | lstm | ctrnn | node | ctgru | ltc | srnn | srnn-per-neuron | srnn-echo | srnn-no-adapt | srnn-no-adapt-no-dales | srnn-sfa-only | srnn-std-only | srnn-E-only | srnn-e-only-echo | srnn-e-only-per-neuron |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| har | 0.47 | 0.53 | 0.91 | 0.57 | 1.33 | 1.16 | 1.04 | 0.98 | 0.60 | 0.57 | 0.81 | 0.70 | 0.91 | 0.90 | 0.80 |
+| gesture | 0.15 | 0.16 | 0.24 | 0.19 | 0.25 | 0.61 | 0.54 | 0.45 | 0.22 | 0.19 | 0.38 | 0.25 | 0.32 | 0.29 | 0.38 |
+| occupancy | 0.64 | 0.60 | 0.80 | 0.59 | 1.07 | 1.31 | 1.21 | 1.15 | 0.73 | 0.76 | 0.89 | 0.77 | 0.97 | 0.93 | 0.95 |
+| smnist | 44.6 | 42.8 | 46.6 | 46.7 | 49.9 | 52.9 | 53.8 | — | — | — | — | — | — | — | — |
+| traffic | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| power | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| ozone_fixed | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| person | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| cheetah | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+
+*CPU-hours are median across seeds (1 vCPU per cell).*
 
