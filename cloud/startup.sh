@@ -129,6 +129,9 @@ else
 fi
 # Ensure tf_keras is installed (needed for TF_USE_LEGACY_KERAS=1)
 python3 -c "import tf_keras" 2>/dev/null || pip install --quiet tf_keras
+# Ensure h5py + scipy for Lyapunov HDF5 saves and PCHIP time-stretch
+python3 -c "import h5py" 2>/dev/null || pip install --quiet h5py
+python3 -c "import scipy" 2>/dev/null || pip install --quiet scipy
 python3 --version
 echo "  TensorFlow: $(python3 -c 'import tensorflow as tf; print(tf.__version__)' 2>&1)"
 
