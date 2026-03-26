@@ -39,17 +39,33 @@ def create_ic_variable(state_dim, name="initial_state_0"):
     return ic_var
 
 
-def tile_ic_for_batch(ic_var, batch_size_tensor):
+def tile_ic_for_batch(ic_var, batch_size_tensor, cell=None):
     """Tile a (state_dim,) IC variable to (batch, state_dim).
+
+    If the cell uses LSTMStateTuple, splits ic_var into c and h halves
+    and returns the appropriate tuple.
 
     Args:
         ic_var: tf.Variable of shape (state_dim,).
         batch_size_tensor: Scalar int tensor for dynamic batch size.
+        cell: Optional RNNCell — if LSTM, returns LSTMStateTuple.
 
     Returns:
-        Tiled tensor of shape (batch, state_dim).
+        Tiled initial state: (batch, state_dim) tensor or LSTMStateTuple.
     """
-    return tf.tile(tf.expand_dims(ic_var, 0), [batch_size_tensor, 1])
+    tiled = tf.tile(tf.expand_dims(ic_var, 0), [batch_size_tensor, 1])
+
+    # Check if cell uses LSTMStateTuple
+    if cell is not None:
+        state_size = cell.state_size
+        if hasattr(state_size, 'c') and hasattr(state_size, 'h'):
+            # LSTMStateTuple: split flat IC into c and h
+            c_size = state_size.c
+            c = tiled[:, :c_size]
+            h = tiled[:, c_size:]
+            return tf.nn.rnn_cell.LSTMStateTuple(c=c, h=h)
+
+    return tiled
 
 
 def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):

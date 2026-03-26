@@ -191,7 +191,7 @@ class CheetahModel:
         self._state_dim = state_dim
         self.ic_var = create_ic_variable(state_dim, name="ic")
         batch_size_t = tf.shape(head)[1]
-        batch_ic = tile_ic_for_batch(self.ic_var, batch_size_t)
+        batch_ic = tile_ic_for_batch(self.ic_var, batch_size_t, cell=self.fused_cell)
         head, _ = tf.nn.dynamic_rnn(
             self.fused_cell, head, initial_state=batch_ic,
             dtype=tf.float32, time_major=True)
