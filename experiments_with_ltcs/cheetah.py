@@ -281,7 +281,9 @@ class CheetahModel:
         self.saver.restore(self.sess, self.checkpoint_path)
 
 
-    def fit(self,cheetah_data,epochs,verbose=True,log_period=50):
+    def fit(self,cheetah_data,epochs,verbose=True,log_period=50,
+            seed=None, stretch_lo=1.0, stretch_hi=1.0,
+            min_loops=5, min_loop_len=500):
         from lr_schedule import warmup_hold_cosine_lr
 
         rng = np.random.RandomState(seed)
