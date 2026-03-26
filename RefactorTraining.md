@@ -26,15 +26,18 @@ All in `experiments_with_ltcs/`:
   - Each has: I/O masks, W_in_mask on all constructors, single-timestep readout with W_out_mask, solver/h CLI args
   - Regression experiments (traffic, power, cheetah) use `tf.squeeze` after Dense(1) for scalar output
 
+### Phase 4b: Lyapunov + Batch Wrapping (✅ complete)
+- **`training_utils.py`** — `wrap_train_batch()`, `wrap_eval_batch()`, `setup_lyapunov_ops()`, `run_lyapunov_if_due()`
+- All 9 experiments: `fit()` now applies palindrome looping, time-stretch, random windowing via shared wrappers
+- Lyapunov LLE computed at every 10-epoch checkpoint, saved as HDF5 to `lyapunov/<experiment>/`
+- ⚠️ **Trainable IC deferred** — requires restructuring Model `__init__` to build graph with `initial_state`
+
 ---
 
 ## What's Remaining
 
-### Phase 4b: Integrate trainable IC + Lyapunov calls into experiment scripts
-- Add `create_trainable_ic()` call after session init, pass IC to `dynamic_rnn`
-- Add `compute_lyapunov_at_checkpoint()` call at checkpoints in `fit()`
-- BPTT truncation via `tf.stop_gradient` at `bptt_start_idx` — needs TF graph-level work
-- Update `iterate_train()` in each Data class to apply palindrome looping + time stretch + random windowing
+### Trainable IC (deferred)
+- Requires restructuring all Model constructors: burn-in must run before dynamic_rnn graph is built
 
 ### Phase 5: VM Image Rebuild
 - Add `h5py` and `scipy` to pip install in `cloud/build_image.sh`
