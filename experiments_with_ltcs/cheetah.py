@@ -11,6 +11,7 @@ from srnn_model import SRNNCell
 from io_masks import generate_neuron_partition, make_input_row_mask, make_output_mask
 from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
 from time_stretch import stretch_batch, random_stretch_factor
+from training_utils import wrap_train_batch, wrap_eval_batch
 import argparse
 import datetime as dt
 
@@ -270,6 +271,8 @@ class CheetahModel:
     def fit(self,cheetah_data,epochs,verbose=True,log_period=50):
         from lr_schedule import warmup_hold_cosine_lr
 
+        rng = np.random.RandomState(seed)
+
         best_valid_loss = np.inf
         best_valid_stats = (0,0,0,0,0,0,0)
         batches_per_epoch = cheetah_data.train_x.shape[1] // self.batch_size
@@ -279,8 +282,22 @@ class CheetahModel:
         self.save()
         for e in range(epochs):
             if(verbose and e%log_period == 0):
-                test_acc,test_loss = self.sess.run([self.accuracy,self.loss],{self.x:cheetah_data.test_x,self.target_y: cheetah_data.test_y})
-                valid_acc,valid_loss = self.sess.run([self.accuracy,self.loss],{self.x:cheetah_data.valid_x,self.target_y: cheetah_data.valid_y})
+                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
+                    cheetah_data.test_x, cheetah_data.test_y,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
+                test_acc,test_loss = self.sess.run(
+                    [self.accuracy, self.loss],
+                    {self.x: _x_eval, self.target_y: _y_eval,
+                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
+                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
+                    cheetah_data.valid_x, cheetah_data.valid_y,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
+                valid_acc,valid_loss = self.sess.run(
+                    [self.accuracy, self.loss],
+                    {self.x: _x_eval, self.target_y: _y_eval,
+                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
                 if((valid_loss < best_valid_loss and e > 0) or e==1):
                     # print("BEST")
                     best_valid_loss = valid_loss
@@ -294,10 +311,15 @@ class CheetahModel:
 
             losses = []
             accs = []
-            for batch_x,batch_y in cheetah_data.iterate_train(batch_size=self.batch_size):
+            for raw_x, raw_y in cheetah_data.iterate_train(batch_size=self.batch_size):
+                batch_x, batch_y, readout_idx, bptt_start_idx = wrap_train_batch(
+                    raw_x, raw_y, rng, stretch_lo=stretch_lo, stretch_hi=stretch_hi,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
                 lr = warmup_hold_cosine_lr(global_step, total_steps)
                 self.sess.run(self.lr_var.assign(lr))
-                acc,loss,_ = self.sess.run([self.accuracy,self.loss,self.train_step],{self.x:batch_x,self.target_y: batch_y})
+                acc,loss,_ = self.sess.run([self.accuracy,self.loss,self.train_step],{self.x: batch_x, self.target_y: batch_y[readout_idx],
+                     self.readout_idx: readout_idx, self.bptt_start_idx: bptt_start_idx})
                 if(len(self.constrain_op) > 0):
                     self.sess.run(self.constrain_op)
 
@@ -369,5 +391,8 @@ if __name__ == "__main__":
     traffic_data = CheetahData()
     model = CheetahModel(model_type = args.model,model_size=args.size,sparsity_level=args.sparsity,learning_rate=args.lr,batch_size=args.batch_size)
 
-    model.fit(traffic_data,epochs=args.epochs,log_period=args.log)
+    model.fit(traffic_data,epochs=args.epochs,log_period=args.log,
+              seed=args.seed, stretch_lo=args.stretch_lo,
+              stretch_hi=args.stretch_hi, min_loops=args.min_loops,
+              min_loop_len=args.min_loop_len)
 

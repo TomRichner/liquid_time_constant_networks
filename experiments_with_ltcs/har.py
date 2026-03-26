@@ -11,6 +11,7 @@ from srnn_model import SRNNCell
 from io_masks import generate_neuron_partition, make_input_row_mask, make_output_mask
 from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
 from time_stretch import stretch_batch, random_stretch_factor
+from training_utils import wrap_train_batch, wrap_eval_batch
 import argparse
 
 def cut_in_sequences(x,y,seq_len,inc=1):
@@ -51,21 +52,9 @@ class HarData:
         self.seq_len = seq_len
         print("Total number of test sequences: {}".format(self.test_x.shape[1]))
 
-    def iterate_train(self, batch_size=16, rng=None, stretch_lo=1.0,
-                      stretch_hi=1.0, min_loops=5, min_loop_len=500):
-        """Yield training batches with time-stretch and palindrome looping.
-
-        Returns: (batch_x, batch_y, readout_idx, bptt_start_idx)
-            batch_x: (win_len, batch, features)
-            batch_y: (win_len, batch) labels (palindromed)
-            readout_idx: int — index within window for readout
-            bptt_start_idx: int — where to start BPTT
-        """
-        if rng is None:
-            rng = np.random.RandomState()
-
+    def iterate_train(self, batch_size=16):
         total_seqs = self.train_x.shape[1]
-        permutation = rng.permutation(total_seqs)
+        permutation = np.random.permutation(total_seqs)
         total_batches = total_seqs // batch_size
 
         for i in range(total_batches):
@@ -73,32 +62,9 @@ class HarData:
             end = start + batch_size
             batch_x = self.train_x[:,permutation[start:end]]
             batch_y = self.train_y[:,permutation[start:end]]
+            yield (batch_x, batch_y)
 
-            # 1. Time stretch (before palindrome looping)
-            if abs(stretch_lo - stretch_hi) > 1e-6 or abs(stretch_lo - 1.0) > 1e-6:
-                factor = random_stretch_factor(stretch_lo, stretch_hi, rng)
-                batch_x, batch_y = stretch_batch(
-                    batch_x, batch_y, factor, per_timestep_labels=True)
-
-            # 2. Palindrome looping
-            effective_seq_len = batch_x.shape[0]
-            n_loops = compute_n_loops(effective_seq_len, min_loop_len, min_loops)
-            x_looped = palindrome_loop(batch_x, n_loops)
-            y_looped = palindrome_loop_labels(batch_y, n_loops, per_timestep=True)
-
-            # 3. Random windowing
-            loop_len = 2 * effective_seq_len
-            x_win, y_win, readout_idx, bptt_start_idx = random_window(
-                x_looped, y_looped, loop_len, rng)
-
-            yield (x_win, y_win, readout_idx, bptt_start_idx)
-
-    def iterate_eval(self, which="valid", batch_size=None, min_loops=5,
-                     min_loop_len=500):
-        """Yield eval batches (no stretch, no random windowing).
-
-        Palindrome loops the full sequence, readout at end.
-        """
+    def iterate_eval(self, which="valid", batch_size=None):
         if which == "valid":
             x, y = self.valid_x, self.valid_y
         elif which == "test":
@@ -106,21 +72,16 @@ class HarData:
         else:
             raise ValueError(f"Unknown split: {which}")
 
-        n_loops = compute_n_loops(x.shape[0], min_loop_len, min_loops)
-        x_looped = palindrome_loop(x, n_loops)
-        y_looped = palindrome_loop_labels(y, n_loops, per_timestep=True)
-        readout_idx = x_looped.shape[0] - 1  # last timestep
-
-        if batch_size is None or batch_size >= x_looped.shape[1]:
-            yield (x_looped, y_looped, readout_idx)
+        if batch_size is None or batch_size >= x.shape[1]:
+            yield (x, y)
         else:
-            n_batches = x_looped.shape[1] // batch_size
+            n_batches = x.shape[1] // batch_size
             for i in range(n_batches):
                 s = i * batch_size
                 e = s + batch_size
-                yield (x_looped[:, s:e], y_looped[:, s:e], readout_idx)
-            if e < x_looped.shape[1]:
-                yield (x_looped[:, e:], y_looped[:, e:], readout_idx)
+                yield (x[:, s:e], y[:, s:e])
+            if e < x.shape[1]:
+                yield (x[:, e:], y[:, e:])
 
 
 class HarModel:
@@ -318,32 +279,23 @@ class HarModel:
         self.save_named("_init")
         self.save()
         for e in range(epochs):
-            if(e%log_period == 0):
-                # Evaluate on validation and test (palindromed, readout at end)
-                valid_accs, valid_losses = [], []
-                for vx, vy, v_readout in gesture_data.iterate_eval(
-                        "valid", min_loops=min_loops, min_loop_len=min_loop_len):
-                    va, vl = self.sess.run(
-                        [self.accuracy, self.loss],
-                        {self.x: vx, self.target_y: vy[v_readout],
-                         self.readout_idx: v_readout,
-                         self.bptt_start_idx: 0})
-                    valid_accs.append(va); valid_losses.append(vl)
-                valid_acc = np.mean(valid_accs)
-                valid_loss = np.mean(valid_losses)
-
-                test_accs, test_losses = [], []
-                for tx, ty, t_readout in gesture_data.iterate_eval(
-                        "test", min_loops=min_loops, min_loop_len=min_loop_len):
-                    ta, tl = self.sess.run(
-                        [self.accuracy, self.loss],
-                        {self.x: tx, self.target_y: ty[t_readout],
-                         self.readout_idx: t_readout,
-                         self.bptt_start_idx: 0})
-                    test_accs.append(ta); test_losses.append(tl)
-                test_acc = np.mean(test_accs)
-                test_loss = np.mean(test_losses)
-
+            if(verbose and e%log_period == 0):
+                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
+                    gesture_data.test_x, gesture_data.test_y,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
+                test_acc, test_loss = self.sess.run(
+                    [self.accuracy, self.loss],
+                    {self.x: _x_eval, self.target_y: _y_eval,
+                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
+                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
+                    gesture_data.valid_x, gesture_data.valid_y,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
+                valid_acc, valid_loss = self.sess.run(
+                    [self.accuracy, self.loss],
+                    {self.x: _x_eval, self.target_y: _y_eval,
+                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
                 # Accuracy metric -> higher is better
                 if(valid_acc > best_valid_accuracy and e > 0):
                     best_valid_accuracy = valid_acc
@@ -357,22 +309,17 @@ class HarModel:
 
             losses = []
             accs = []
-            for batch_x, batch_y, readout_idx, bptt_start_idx in gesture_data.iterate_train(
-                    batch_size=self.batch_size, rng=rng,
-                    stretch_lo=stretch_lo, stretch_hi=stretch_hi,
-                    min_loops=min_loops, min_loop_len=min_loop_len):
+            for raw_x, raw_y in gesture_data.iterate_train(batch_size=self.batch_size):
+                batch_x, batch_y, readout_idx, bptt_start_idx = wrap_train_batch(
+                    raw_x, raw_y, rng, stretch_lo=stretch_lo, stretch_hi=stretch_hi,
+                    min_loops=min_loops, min_loop_len=min_loop_len,
+                    per_timestep_labels=True)
                 lr = warmup_hold_cosine_lr(global_step, total_steps)
                 self.sess.run(self.lr_var.assign(lr))
-
-                # For training: target_y is the label at the readout index
-                target = batch_y[readout_idx]  # (batch,)
-
                 acc, loss, _ = self.sess.run(
                     [self.accuracy, self.loss, self.train_step],
-                    {self.x: batch_x,
-                     self.target_y: target,
-                     self.readout_idx: readout_idx,
-                     self.bptt_start_idx: bptt_start_idx})
+                    {self.x: batch_x, self.target_y: batch_y[readout_idx],
+                     self.readout_idx: readout_idx, self.bptt_start_idx: bptt_start_idx})
                 if(not self.constrain_op is None):
                     self.sess.run(self.constrain_op)
 
