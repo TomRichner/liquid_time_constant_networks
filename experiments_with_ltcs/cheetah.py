@@ -12,6 +12,7 @@ from io_masks import generate_neuron_partition, make_input_row_mask, make_output
 from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
 from time_stretch import stretch_batch, random_stretch_factor
 from training_utils import wrap_train_batch, wrap_eval_batch, setup_lyapunov_ops, run_lyapunov_if_due
+from trainable_ic import create_ic_variable, tile_ic_for_batch, run_burn_in_and_assign
 import argparse
 import datetime as dt
 
@@ -81,11 +82,15 @@ class CheetahData:
 
 class CheetahModel:
 
-    def __init__(self,model_type,model_size,sparsity_level=0.5,learning_rate = 0.001,batch_size=16):
+    def __init__(self,model_type,model_size,sparsity_level=0.5,learning_rate = 0.001,batch_size=16,
+                 seed=None, solver="semi_implicit", h=0.0025,
+                 burn_in_seconds=30.0, input_dim=17):
         self.model_type = model_type
         self.constrain_op = []
         self.sparsity_level = sparsity_level
         self.batch_size = batch_size
+        self._input_dim = input_dim
+        self._burn_in_seconds = burn_in_seconds
 
         # ── I/O masks ──
         mask_seed = seed if seed is not None else 0
@@ -104,10 +109,10 @@ class CheetahModel:
         self.bptt_start_idx = tf.placeholder(dtype=tf.int32, shape=[], name="bptt_start_idx")
         self.model_size = model_size
         head = self.x
+
+        # ── Step 1: Build cell ──
         if(model_type == "lstm"):
             self.fused_cell = tf.nn.rnn_cell.LSTMCell(model_size)
-
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type.startswith("ltc")):
             self.wm = ltc.LTCCell(model_size, W_in_mask=self._W_in_mask)
             if(model_type.endswith("_rk")):
@@ -116,84 +121,82 @@ class CheetahModel:
                 self.wm._solver = ltc.ODESolver.Explicit
             else:
                 self.wm._solver = ltc.ODESolver.SemiImplicit
-
-            head,_ = tf.nn.dynamic_rnn(self.wm,head,dtype=tf.float32,time_major=True)
-            self.constrain_op.extend(self.wm.get_param_constrain_op())
+            self.fused_cell = self.wm
         elif(model_type == "node"):
             self.fused_cell = NODE(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctgru"):
             self.fused_cell = CTGRU(model_size,cell_clip=-1,W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "ctrnn"):
             self.fused_cell = CTRNN(model_size,cell_clip=-1,global_feedback=True,W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "hopf"):
             self.fused_cell = SRNNCell(model_size, n_E=model_size,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn"):
-            n_E = model_size // 2  # 50% excitatory
+            n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-per-neuron"):
-            n_E = model_size // 2  # 50% excitatory
+            n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True, per_neuron=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=3, n_b_E=1, n_b_I=1, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-no-adapt-no-dales"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=0, n_a_I=0, n_b_E=0, n_b_I=0, dales=False,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-sfa-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=0, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-std-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-E-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-echo"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         elif(model_type == "srnn-e-only-per-neuron"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True, per_neuron=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
-            head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
         else:
             raise ValueError("Unknown model type '{}'".format(model_type))
+
+        # ── Step 2: IC variable + dynamic_rnn ──
+        state_dim = self.fused_cell.state_size
+        if hasattr(state_dim, '__len__'):
+            state_dim = sum(state_dim)
+        self._state_dim = state_dim
+        self.ic_var = create_ic_variable(state_dim, name="ic")
+        batch_size_t = tf.shape(head)[1]
+        batch_ic = tile_ic_for_batch(self.ic_var, batch_size_t)
+        head, _ = tf.nn.dynamic_rnn(
+            self.fused_cell, head, initial_state=batch_ic,
+            dtype=tf.float32, time_major=True)
+        if model_type.startswith("ltc"):
+            self.constrain_op.extend(self.wm.get_param_constrain_op())
 
         if(self.sparsity_level > 0):
             self.constrain_op.extend(self.get_sparsity_ops())
@@ -218,6 +221,12 @@ class CheetahModel:
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.global_variables_initializer())
 
+        # ── Phase 2: Burn-in and assign IC ──
+        if burn_in_seconds > 0:
+            run_burn_in_and_assign(
+                self.fused_cell, input_dim, self.sess, self.ic_var,
+                burn_in_seconds=burn_in_seconds)
+
         self.result_file = os.path.join("results","cheetah","{}_{}_{:02d}.csv".format(model_type,model_size,int(100*self.sparsity_level)))
         if(not os.path.exists("results/cheetah")):
             os.makedirs("results/cheetah")
@@ -228,17 +237,12 @@ class CheetahModel:
         self.checkpoint_path = os.path.join("tf_sessions","cheetah","{}".format(model_type))
         if(not os.path.exists("tf_sessions/cheetah")):
             os.makedirs("tf_sessions/cheetah")
-            
+
         self.saver = tf.train.Saver(max_to_keep=None)
 
         # ── Lyapunov placeholders (single-step ops) ──
-        state_dim = self.fused_cell.state_size if hasattr(self, 'fused_cell') else (
-            self.wm.state_size if hasattr(self, 'wm') else model_size)
-        if hasattr(state_dim, '__len__'):
-            state_dim = sum(state_dim)
         self._lya_x_ph, self._lya_s_ph = setup_lyapunov_ops(
-            self.fused_cell if hasattr(self, 'fused_cell') else self.wm,
-            17, state_dim)
+            self.fused_cell, 17, state_dim)
 
 
     def get_sparsity_ops(self):
@@ -344,7 +348,7 @@ class CheetahModel:
                     test_loss,test_acc
                 ))
             if(e > 0 and e % 10 == 0):
-                self.save_named("_epochcheetah_data".format(e))
+                self.save_named("_epoch{}".format(e))
                 # Lyapunov at checkpoint
                 checkpoint_epochs = set(range(10, epochs+1, 10))
                 lya_cell = self.fused_cell if hasattr(self, "fused_cell") else self.wm
@@ -398,6 +402,8 @@ if __name__ == "__main__":
                         help="Min time-stretch factor (1.0 = disabled)")
     parser.add_argument('--stretch_hi',default=1.0,type=float,
                         help="Max time-stretch factor (1.0 = disabled)")
+    parser.add_argument('--burn_in',default=30.0,type=float,
+                        help="Burn-in duration in seconds (0 to disable)")
 
     args = parser.parse_args()
 
@@ -406,7 +412,10 @@ if __name__ == "__main__":
         tf.set_random_seed(args.seed)
 
     traffic_data = CheetahData()
-    model = CheetahModel(model_type = args.model,model_size=args.size,sparsity_level=args.sparsity,learning_rate=args.lr,batch_size=args.batch_size)
+    model = CheetahModel(model_type = args.model,model_size=args.size,sparsity_level=args.sparsity,
+                     learning_rate=args.lr,batch_size=args.batch_size,
+                     seed=args.seed, solver=args.solver, h=args.h,
+                     burn_in_seconds=args.burn_in, input_dim=17)
 
     model.fit(traffic_data,epochs=args.epochs,log_period=args.log,
               seed=args.seed, stretch_lo=args.stretch_lo,

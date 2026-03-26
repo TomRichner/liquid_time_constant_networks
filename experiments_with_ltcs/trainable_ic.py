@@ -1,22 +1,55 @@
 # trainable_ic.py — Burn-in and trainable initial conditions
 #
-# Two-step approach:
-# 1. Burn-in: Forward-step the cell for a specified duration with zero input
-#    to find the quiescent attractor (or a point on it).
-# 2. Trainable IC: Store the result as a tf.Variable(trainable=True) that
-#    tracks the evolving attractor during training via gradients.
+# Two-phase approach for TF1 graph compatibility:
 #
-# Usage:
-#   cell = SRNNCell(32, ...)
-#   ic_var, ic_np = create_trainable_ic(
-#       cell, input_size=28, sess=sess, burn_in_seconds=30.0)
-#   # Then pass to dynamic_rnn:
-#   batch_ic = tf.tile(tf.expand_dims(ic_var, 0), [batch_size, 1])
+# Phase 1 (graph build, in __init__):
+#   ic_var = create_ic_variable(state_dim, name="ic")
+#   batch_ic = tile_ic_for_batch(ic_var, tf.shape(self.x)[1])
 #   head, _ = tf.nn.dynamic_rnn(cell, head, initial_state=batch_ic, ...)
+#
+# Phase 2 (after session init, before training):
+#   run_burn_in_and_assign(cell, input_size, sess, ic_var, burn_in_seconds=30)
+#
+# The IC variable starts as zeros. After session init, we run the cell
+# forward with zero input for burn_in_seconds to find the quiescent
+# attractor, then assign that state to the IC variable. Since ic_var is
+# trainable, gradients during training will track the evolving attractor.
 
 import numpy as np
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
+
+
+def create_ic_variable(state_dim, name="initial_state_0"):
+    """Create a trainable IC variable initialized to zeros.
+
+    Call during graph build (Phase 1), before dynamic_rnn.
+
+    Args:
+        state_dim: Integer — total flat state dimension of the cell.
+        name: Variable name.
+
+    Returns:
+        ic_var: tf.Variable(trainable=True) of shape (state_dim,).
+    """
+    ic_var = tf.get_variable(
+        name, shape=[state_dim],
+        initializer=tf.zeros_initializer(),
+        trainable=True, dtype=tf.float32)
+    return ic_var
+
+
+def tile_ic_for_batch(ic_var, batch_size_tensor):
+    """Tile a (state_dim,) IC variable to (batch, state_dim).
+
+    Args:
+        ic_var: tf.Variable of shape (state_dim,).
+        batch_size_tensor: Scalar int tensor for dynamic batch size.
+
+    Returns:
+        Tiled tensor of shape (batch, state_dim).
+    """
+    return tf.tile(tf.expand_dims(ic_var, 0), [batch_size_tensor, 1])
 
 
 def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
@@ -32,9 +65,6 @@ def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
         input_size: Dimension of the input features.
         sess: A tf.Session with the cell's variables already initialized.
         burn_in_seconds: Duration of burn-in in simulated seconds.
-            For SRNN: effective dt = h * ode_solver_unfolds per RNN step.
-            For CTRNN: effective dt = _delta_t * _unfolds per RNN step.
-            For LSTM: no physical time; use burn_in_seconds as step count.
 
     Returns:
         state_np: numpy array of shape (state_dim,) — the settled state.
@@ -52,6 +82,7 @@ def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
         dt_per_step = 1.0
 
     n_steps = max(1, int(np.ceil(burn_in_seconds / dt_per_step)))
+    print(f"  Burn-in: {n_steps} steps ({burn_in_seconds}s, dt={dt_per_step:.6f})")
 
     # Build burn-in input: (n_steps, 1, input_size) of zeros
     zero_input = np.zeros((n_steps, 1, input_size), dtype=np.float32)
@@ -68,7 +99,6 @@ def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
         c_val, h_val = sess.run(
             [final_state.c, final_state.h],
             feed_dict={burn_in_input: zero_input})
-        # Flatten LSTM state: concat [c, h]
         state_np = np.concatenate([c_val[0], h_val[0]], axis=0)
     else:
         state_np = sess.run(
@@ -78,43 +108,27 @@ def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
     return state_np
 
 
-def create_trainable_ic(cell, input_size, sess, burn_in_seconds=30.0,
-                        name="initial_state_0"):
-    """Burn-in and create a trainable initial condition variable.
+def run_burn_in_and_assign(cell, input_size, sess, ic_var,
+                           burn_in_seconds=30.0):
+    """Run burn-in and assign result to the IC variable.
+
+    Call after session init (Phase 2).
 
     Args:
-        cell: A constructed RNNCell.
+        cell: The constructed RNNCell.
         input_size: Input feature dimension.
-        sess: Active tf.Session.
-        burn_in_seconds: Burn-in duration (seconds or steps).
-        name: Variable name.
+        sess: Active tf.Session (variables must be initialized).
+        ic_var: tf.Variable created by create_ic_variable().
+        burn_in_seconds: Burn-in duration.
 
     Returns:
-        ic_var: tf.Variable(trainable=True) of shape (state_dim,).
         ic_np: numpy array of the burn-in result.
     """
     ic_np = compute_burn_in(cell, input_size, sess, burn_in_seconds)
 
-    # Create as trainable variable
-    ic_var = tf.get_variable(
-        name, shape=ic_np.shape,
-        initializer=tf.constant_initializer(ic_np),
-        trainable=True, dtype=tf.float32)
+    # Assign to IC variable
+    sess.run(ic_var.assign(ic_np))
+    print(f"  IC assigned: norm={np.linalg.norm(ic_np):.4f}, "
+          f"range=[{ic_np.min():.4f}, {ic_np.max():.4f}]")
 
-    # Initialize this new variable
-    sess.run(ic_var.initializer)
-
-    return ic_var, ic_np
-
-
-def tile_ic_for_batch(ic_var, batch_size_tensor):
-    """Tile a (state_dim,) IC variable to (batch, state_dim).
-
-    Args:
-        ic_var: tf.Variable of shape (state_dim,).
-        batch_size_tensor: Scalar int tensor for dynamic batch size.
-
-    Returns:
-        Tiled tensor of shape (batch, state_dim).
-    """
-    return tf.tile(tf.expand_dims(ic_var, 0), [batch_size_tensor, 1])
+    return ic_np
