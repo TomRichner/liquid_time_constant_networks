@@ -255,22 +255,33 @@ class SMnistModel:
         self.save()
         for e in range(epochs):
             if(verbose and e%log_period == 0):
-                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
-                    smnist_data.test_x, smnist_data.test_y,
-                    min_loops=min_loops, min_loop_len=min_loop_len,
-                    per_timestep_labels=False)
-                test_acc,test_loss = self.sess.run(
-                    [self.accuracy, self.loss],
-                    {self.x: _x_eval, self.target_y: _y_eval,
-                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
-                _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
-                    smnist_data.valid_x, smnist_data.valid_y,
-                    min_loops=min_loops, min_loop_len=min_loop_len,
-                    per_timestep_labels=False)
-                valid_acc,valid_loss = self.sess.run(
-                    [self.accuracy, self.loss],
-                    {self.x: _x_eval, self.target_y: _y_eval,
-                     self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
+                # Batched eval (palindrome-looped sequences are long)
+                max_eval_batch = 256
+                def _eval_dataset(data_x, data_y):
+                    N = data_x.shape[1]
+                    all_acc, all_loss, count = 0.0, 0.0, 0
+                    for start in range(0, N, max_eval_batch):
+                        end = min(start + max_eval_batch, N)
+                        bx = data_x[:, start:end]
+                        by = data_y[start:end]
+                        _x_eval, _y_eval, _ri_eval = wrap_eval_batch(
+                            bx, by,
+                            min_loops=min_loops, min_loop_len=min_loop_len,
+                            per_timestep_labels=False)
+                        a, l = self.sess.run(
+                            [self.accuracy, self.loss],
+                            {self.x: _x_eval, self.target_y: _y_eval,
+                             self.readout_idx: _ri_eval, self.bptt_start_idx: 0})
+                        bs = end - start
+                        all_acc += a * bs
+                        all_loss += l * bs
+                        count += bs
+                    return all_acc / count, all_loss / count
+
+                test_acc, test_loss = _eval_dataset(
+                    smnist_data.test_x, smnist_data.test_y)
+                valid_acc, valid_loss = _eval_dataset(
+                    smnist_data.valid_x, smnist_data.valid_y)
                 # Accuracy metric -> higher is better
                 if(valid_acc > best_valid_accuracy and e > 0):
                     best_valid_accuracy = valid_acc
