@@ -94,6 +94,16 @@ def compute_burn_in(cell, input_size, sess, burn_in_seconds=30.0):
         _, final_state = tf.nn.dynamic_rnn(
             cell, burn_in_input, dtype=tf.float32, time_major=True)
 
+    # Initialize any new variables created by the burn-in sub-graph
+    # (dynamic_rnn may create duplicate cell variables in burn_in/ scope)
+    uninit_vars = sess.run(tf.report_uninitialized_variables())
+    if len(uninit_vars) > 0:
+        uninit_var_names = [v.decode() for v in uninit_vars]
+        vars_to_init = [v for v in tf.global_variables()
+                        if v.name.split(':')[0] in uninit_var_names]
+        if vars_to_init:
+            sess.run(tf.variables_initializer(vars_to_init))
+
     # Handle LSTMStateTuple
     if isinstance(final_state, tf.nn.rnn_cell.LSTMStateTuple):
         c_val, h_val = sess.run(
