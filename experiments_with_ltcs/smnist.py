@@ -80,7 +80,7 @@ class SMnistModel:
         self._W_in_mask = tf.constant(W_in_mask_np, dtype=tf.float32, name="W_in_mask")
         self._W_out_mask = tf.constant(W_out_mask_np, dtype=tf.float32, name="W_out_mask")
         print(f"  I/O masks: {len(input_idx)} input, {len(inter_idx)} inter, {len(output_idx)} output")
-        self.x = tf.placeholder(dtype=tf.float32,shape=[28,None,28])
+        self.x = tf.placeholder(dtype=tf.float32,shape=[None,None,28])
         self.target_y = tf.placeholder(dtype=tf.int32,shape=[None])
 
 
