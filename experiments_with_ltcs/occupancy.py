@@ -11,7 +11,7 @@ from srnn_model import SRNNCell
 from io_masks import generate_neuron_partition, make_input_row_mask, make_output_mask
 from sequence_looping import palindrome_loop, palindrome_loop_labels, compute_n_loops, random_window
 from time_stretch import stretch_batch, random_stretch_factor
-from training_utils import wrap_train_batch, wrap_eval_batch
+from training_utils import wrap_train_batch, wrap_eval_batch, setup_lyapunov_ops, run_lyapunov_if_due
 import argparse
 import pandas as pd
 
@@ -244,6 +244,15 @@ class OccupancyModel:
             
         self.saver = tf.train.Saver(max_to_keep=None)
 
+        # ── Lyapunov placeholders (single-step ops) ──
+        state_dim = self.fused_cell.state_size if hasattr(self, 'fused_cell') else (
+            self.wm.state_size if hasattr(self, 'wm') else model_size)
+        if hasattr(state_dim, '__len__'):
+            state_dim = sum(state_dim)
+        self._lya_x_ph, self._lya_s_ph = setup_lyapunov_ops(
+            self.fused_cell if hasattr(self, 'fused_cell') else self.wm,
+            5, state_dim)
+
     def get_sparsity_ops(self):
         tf_vars = tf.trainable_variables()
         op_list = []
@@ -346,7 +355,15 @@ class OccupancyModel:
                     test_loss,test_acc*100
                 ))
             if(e > 0 and e % 10 == 0):
-                self.save_named("_epoch{}".format(e))
+                self.save_named("_epochgesture_data".format(e))
+                # Lyapunov at checkpoint
+                checkpoint_epochs = set(range(10, epochs+1, 10))
+                lya_cell = self.fused_cell if hasattr(self, "fused_cell") else self.wm
+                run_lyapunov_if_due(
+                    e, checkpoint_epochs, self.sess, lya_cell,
+                    self._lya_x_ph, self._lya_s_ph,
+                    gesture_data.valid_x, os.path.join("lyapunov", "occupancy"),
+                    seed=seed if seed is not None else 42)
             if(e > 0 and (not np.isfinite(np.mean(losses)))):
                 break
         self.save_named("_last")

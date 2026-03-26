@@ -98,3 +98,78 @@ def wrap_eval_batch(batch_x, batch_y,
         y_at_readout = batch_y
 
     return x_looped, y_at_readout, readout_idx
+
+
+def setup_lyapunov_ops(cell, input_dim, state_dim):
+    """Build single-step TF ops needed for Lyapunov computation.
+
+    Call once after the main graph is built (but before session.run).
+
+    Args:
+        cell: The RNNCell used in the model.
+        input_dim: Input feature dimension.
+        state_dim: Full state dimension of the cell.
+
+    Returns:
+        x_ph: (1, input_dim) placeholder for single-timestep input.
+        s_ph: (1, state_dim) placeholder for state.
+    """
+    import tensorflow.compat.v1 as tf
+
+    x_ph = tf.placeholder(tf.float32, [1, input_dim], name="lya_input")
+    s_ph = tf.placeholder(tf.float32, [1, state_dim], name="lya_state")
+    return x_ph, s_ph
+
+
+def run_lyapunov_if_due(epoch, checkpoint_epochs, sess, cell,
+                        lya_x_ph, lya_s_ph,
+                        val_x, save_dir,
+                        n_palindrome_loops=20, save_last_n_loops=3,
+                        seed=42):
+    """Compute Lyapunov exponent at checkpoint epochs.
+
+    Call from fit() after saving a checkpoint. Does nothing if epoch is
+    not in checkpoint_epochs.
+
+    Args:
+        epoch: Current epoch.
+        checkpoint_epochs: Set or list of epochs to trigger on.
+        sess: tf.Session.
+        cell: The RNNCell (must have state_size).
+        lya_x_ph: (1, input_dim) placeholder from setup_lyapunov_ops.
+        lya_s_ph: (1, state_dim) placeholder from setup_lyapunov_ops.
+        val_x: (T, N, features) validation data. A random sequence is picked.
+        save_dir: Where to save HDF5 results.
+        n_palindrome_loops: Number of fwd+bwd loops for LE computation.
+        save_last_n_loops: Loops to save trajectories for.
+        seed: Random seed.
+
+    Returns:
+        LLE or None if not a checkpoint epoch.
+    """
+    if epoch not in checkpoint_epochs:
+        return None
+
+    from lyapunov import compute_lyapunov_at_checkpoint
+
+    # Pick a random validation sequence
+    rng = np.random.RandomState(seed + epoch)
+    seq_idx = rng.randint(0, val_x.shape[1])
+    val_seq = val_x[:, seq_idx, :]  # (T, features)
+
+    # Get current initial state (zeros for now — will be IC when integrated)
+    state_dim = cell.state_size
+    if hasattr(state_dim, '__len__'):
+        # LSTMStateTuple or similar
+        state_dim = sum(state_dim)
+    initial_state = np.zeros(state_dim, dtype=np.float32)
+
+    LLE = compute_lyapunov_at_checkpoint(
+        sess, cell, lya_x_ph, lya_s_ph,
+        val_seq, initial_state,
+        save_dir=save_dir, epoch=epoch,
+        n_palindrome_loops=n_palindrome_loops,
+        save_last_n_loops=save_last_n_loops,
+        seed=seed)
+
+    return LLE
