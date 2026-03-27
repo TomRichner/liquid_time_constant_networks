@@ -187,7 +187,7 @@ class HarModel:
                 n_a_E=0, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,
                 solver=solver, h=h, W_in_mask=self._W_in_mask)
             head,_ = tf.nn.dynamic_rnn(self.fused_cell,head,dtype=tf.float32,time_major=True)
-        elif(model_type == "srnn-E-only"):
+        elif(model_type == "srnn-e-only"):
             n_E = model_size // 2
             self.fused_cell = SRNNCell(model_size, n_E=n_E,
                 n_a_E=3, n_a_I=0, n_b_E=1, n_b_I=0, dales=True,

@@ -23,7 +23,7 @@ SRNN_SHARED_MODELS = [
     "srnn-no-adapt-no-dales",
     "srnn-sfa-only",
     "srnn-std-only",
-    "srnn-E-only",
+    "srnn-e-only",
     "srnn-e-only-echo",
 ]
 
@@ -43,10 +43,10 @@ def uses_dales(model):
     return model != "srnn-no-adapt-no-dales"
 
 # Scalar params: (ckpt_var_suffix, display_name, transform, required_condition)
-SFA_E_MODELS = ("srnn", "srnn-echo", "srnn-sfa-only", "srnn-E-only", "srnn-e-only-echo",
+SFA_E_MODELS = ("srnn", "srnn-echo", "srnn-sfa-only", "srnn-e-only", "srnn-e-only-echo",
                  "srnn-per-neuron", "srnn-e-only-per-neuron")
 SFA_I_MODELS = ("srnn", "srnn-echo", "srnn-per-neuron")
-STD_E_MODELS = ("srnn", "srnn-echo", "srnn-std-only", "srnn-E-only", "srnn-e-only-echo",
+STD_E_MODELS = ("srnn", "srnn-echo", "srnn-std-only", "srnn-e-only", "srnn-e-only-echo",
                  "srnn-per-neuron", "srnn-e-only-per-neuron")
 STD_I_MODELS = ("srnn", "srnn-echo", "srnn-per-neuron")
 

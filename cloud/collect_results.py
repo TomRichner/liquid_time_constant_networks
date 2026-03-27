@@ -26,7 +26,7 @@ REGRESSION = {"traffic", "power", "cheetah"}
 
 MODELS = ["lstm", "ctrnn", "node", "ctgru", "ltc", "srnn", "srnn-per-neuron", "srnn-echo",
           "srnn-no-adapt", "srnn-no-adapt-no-dales", "srnn-sfa-only", "srnn-std-only",
-          "srnn-E-only", "srnn-e-only-echo", "srnn-e-only-per-neuron"]
+          "srnn-e-only", "srnn-e-only-echo", "srnn-e-only-per-neuron"]
 
 
 def download_run(run_name, with_checkpoints=False):

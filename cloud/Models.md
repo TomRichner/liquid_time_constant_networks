@@ -18,7 +18,7 @@ All models are 32 neurons (default `--size 32`), trained with Adam optimizer and
 | SRNN No-Adapt No-Dales | `srnn-no-adapt-no-dales` | Ours | SRNN with no adaptation, no Dale's law |
 | SRNN SFA-Only | `srnn-sfa-only` | Ours | SRNN with SFA on E neurons only (ablation) |
 | SRNN STD-Only | `srnn-std-only` | Ours | SRNN with STD on E neurons only (ablation) |
-| SRNN E-Only | `srnn-E-only` | Ours | SRNN with both SFA+STD on E neurons only (ablation) |
+| SRNN E-Only | `srnn-e-only` | Ours | SRNN with both SFA+STD on E neurons only (ablation) |
 | SRNN E-Only Echo | `srnn-e-only-echo` | Ours | E-only reservoir: only W_in + Dense trained |
 | SRNN E-Only Per-Neuron | `srnn-e-only-per-neuron` | Ours | E-only with per-neuron dynamics params |
 
@@ -60,10 +60,10 @@ Same as `srnn` but with `per_neuron=True`: each neuron gets its own dynamics par
 Same cell as `srnn`, but only `W_in` (input weights) and the output Dense layer are trained. All internal dynamics parameters and `W` are frozen at initialization. Tests whether the random SRNN dynamics are useful as a fixed feature extractor.
 
 #### `srnn-e-only-echo` — E-only echo state
-Same as `srnn-e-only-echo` uses `srnn-E-only` cell (SFA+STD on E only), but only `W_in` and Dense are trained. Tests whether the E-only random dynamics work as a fixed feature extractor.
+Same as `srnn-e-only-echo` uses `srnn-e-only` cell (SFA+STD on E only), but only `W_in` and Dense are trained. Tests whether the E-only random dynamics work as a fixed feature extractor.
 
 #### `srnn-e-only-per-neuron` — E-only per-neuron dynamics
-Same as `srnn-E-only` but with `per_neuron=True`: each E neuron gets its own SFA/STD parameters. I neurons have no adaptation.
+Same as `srnn-e-only` but with `per_neuron=True`: each E neuron gets its own SFA/STD parameters. I neurons have no adaptation.
 
 ### Ablation Models
 
@@ -72,7 +72,7 @@ These test the contribution of individual adaptation mechanisms. All use Dale's 
 | Variant | SFA (E) | SFA (I) | STD (E) | STD (I) | Purpose |
 |---------|---------|---------|---------|---------|---------|
 | `srnn` | 3 | 3 | 1 | 1 | Full model (reference) |
-| `srnn-E-only` | 3 | 0 | 1 | 0 | Both adapt, E only |
+| `srnn-e-only` | 3 | 0 | 1 | 0 | Both adapt, E only |
 | `srnn-e-only-per-neuron` | 3 | 0 | 1 | 0 | E-only, per-neuron params |
 | `srnn-sfa-only` | 3 | 0 | 0 | 0 | SFA alone |
 | `srnn-std-only` | 0 | 0 | 1 | 0 | STD alone |
@@ -84,7 +84,7 @@ The ablation ladder answers: Does adaptation help? Is SFA or STD more important?
 
 ### Trainable Parameters by Variant
 
-| Parameter | `srnn` | `srnn-E-only` | `srnn-sfa-only` | `srnn-std-only` | `srnn-no-adapt` |
+| Parameter | `srnn` | `srnn-e-only` | `srnn-sfa-only` | `srnn-std-only` | `srnn-no-adapt` |
 |-----------|--------|---------------|-----------------|-----------------|-----------------|
 | `tau_d` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `a_0` | ✓ | ✓ | ✓ | ✓ | ✓ |

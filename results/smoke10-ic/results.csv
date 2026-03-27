@@ -1,0 +1,4 @@
+model,experiment,task_type,seed,best_epoch,test_loss,test_metric,metric_name
+lstm,smnist,classification,1,009,0.54,84.27,accuracy
+ltc,smnist,classification,1,003,2.14,19.53,accuracy
+srnn-e-only-per-neuron,smnist,classification,1,009,1.71,34.32,accuracy
