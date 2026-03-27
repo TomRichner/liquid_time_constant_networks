@@ -13,6 +13,7 @@ import datetime
 import io
 import json
 import os
+import time
 import statistics
 import subprocess
 import sys
@@ -506,13 +507,15 @@ def _run_inspect_srnn_params(run_name, out_dir):
         print(f"  No SRNN checkpoints found for any experiment, skipping param inspection")
         return
 
-    print(f"\n  Running SRNN parameter inspection (experiment: {target_exp})...")
+    print(f"\n  Running SRNN parameter inspection (all experiments)...")
     try:
         subprocess.run([
             sys.executable, inspect_script,
             "--run", run_name,
-            "--experiment", target_exp,
+            "--experiment", "all",
             "--seed", "1",
+            "--local", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "tmp", "collect_results", run_name),
             "--out_dir", out_dir,
         ], check=True, capture_output=True, text=True, timeout=120)
     except subprocess.CalledProcessError as e:
@@ -526,6 +529,7 @@ def _run_inspect_srnn_params(run_name, out_dir):
     params_md = os.path.join(out_dir, "srnn_params.md")
     params_pdf = os.path.join(out_dir, "srnn_params.pdf")
     if os.path.isfile(params_md):
+        time.sleep(2)  # ensure md is fully flushed before pandoc
         _run_pandoc(params_md, params_pdf, paperwidth="11in", paperheight="8.5in")
 
 

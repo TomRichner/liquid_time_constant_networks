@@ -4,7 +4,7 @@ Usage:
   python3 cloud/inspect_srnn_params.py --run all50ep --experiment har --seed 1
   python3 cloud/inspect_srnn_params.py --run all50ep --experiment har --seed 1 --local /tmp/collect_results/all50ep
 """
-import os, sys, argparse, subprocess
+import os, sys, argparse, subprocess, glob
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -204,152 +204,189 @@ def get_ckpt_dir(base_dir, model, experiment, seed):
     return os.path.join(base_dir, model, experiment, f"seed{seed}", "checkpoint")
 
 
-def generate_tables(base_dir, out_dir, run_name, experiment, seed):
-    """Generate per-model Init/Best/Last parameter tables."""
+EXPERIMENTS = ["har", "gesture", "occupancy", "smnist", "traffic", "power", "ozone_fixed", "person", "cheetah"]
+
+def _find_experiments_with_srnn_checkpoints(base_dir, seed):
+    """Find experiments that have at least one SRNN checkpoint."""
+    all_models = SRNN_SHARED_MODELS + SRNN_PER_NEURON_MODELS
+    found = []
+    for exp in EXPERIMENTS:
+        for model in all_models:
+            ckpt_dir = get_ckpt_dir(base_dir, model, exp, seed)
+            if os.path.isdir(ckpt_dir) and os.listdir(ckpt_dir):
+                found.append(exp)
+                break
+    return found
+
+
+def generate_tables(base_dir, out_dir, run_name, experiments, seed):
+    """Generate per-model Init/Best/Last parameter tables for all experiments.
+
+    Args:
+        experiments: list of experiment names, or ["all"] to auto-detect.
+    """
+    if experiments == ["all"]:
+        experiments = _find_experiments_with_srnn_checkpoints(base_dir, seed)
+        if not experiments:
+            print("  No experiments found with SRNN checkpoints.")
+            return
+        print(f"  Auto-detected experiments: {', '.join(experiments)}")
 
     md_lines = []
     md_lines.append(f"# SRNN Parameters: Init vs Best vs Last")
-    md_lines.append(f"**Run:** {run_name} | **Experiment:** {experiment} | **Seed:** {seed}\n")
+    md_lines.append(f"**Run:** {run_name} | **Seed:** {seed}\n")
 
     console_output = []
 
-    for model in SRNN_SHARED_MODELS:
-        ckpt_dir = get_ckpt_dir(base_dir, model, experiment, seed)
+    for experiment in experiments:
+        md_lines.append(f"---\n## Experiment: `{experiment}`\n")
+        console_output.append(f"\n{'='*60}")
+        console_output.append(f"  Experiment: {experiment}")
+        console_output.append(f"{'='*60}")
+        exp_has_data = False
 
-        # Read 3 checkpoints
-        data = {}
-        for stage, suffix in CHECKPOINT_SUFFIXES.items():
-            ckpt_path = os.path.join(ckpt_dir, f"{model}{suffix}")
-            row = read_checkpoint(ckpt_path, model)
-            if row is not None:
-                data[stage] = row
+        for model in SRNN_SHARED_MODELS:
+            ckpt_dir = get_ckpt_dir(base_dir, model, experiment, seed)
 
-        if not data:
-            print(f"  {model}: no checkpoints found, skipping")
-            continue
+            # Read 3 checkpoints
+            data = {}
+            for stage, suffix in CHECKPOINT_SUFFIXES.items():
+                ckpt_path = os.path.join(ckpt_dir, f"{model}{suffix}")
+                row = read_checkpoint(ckpt_path, model)
+                if row is not None:
+                    data[stage] = row
 
-        stages_found = [s for s in ["Init", "Best", "Last"] if s in data]
-        print(f"  {model}: found {', '.join(stages_found)}")
+            if not data:
+                print(f"  {model}: no checkpoints found, skipping")
+                continue
 
-        # Add weight stats
-        weight_params = ["W_E_mean", "W_E_std", "W_I_mean", "W_I_std",
-                         "W_all_mean", "W_all_std", "W_in_mean", "W_in_std"]
+            exp_has_data = True
+            stages_found = [s for s in ["Init", "Best", "Last"] if s in data]
+            print(f"  {model}: found {', '.join(stages_found)}")
 
-        # Markdown table
-        md_lines.append(f"## `{model}`\n")
-        header = "| Parameter |" + " | ".join(f" {s} " for s in stages_found) + " |"
-        sep = "|-----------|" + "|".join(["--------:"] * len(stages_found)) + "|"
-        md_lines.append(header)
-        md_lines.append(sep)
+            # Add weight stats
+            weight_params = ["W_E_mean", "W_E_std", "W_I_mean", "W_I_std",
+                             "W_all_mean", "W_all_std", "W_in_mean", "W_in_std"]
 
-        all_display = [d for _, d, _, cond in PARAMS if cond(model)] + weight_params
-        DISPLAY = {
-            "W_E_mean": "W_E mean", "W_E_std": "W_E std",
-            "W_I_mean": "W_I mean", "W_I_std": "W_I std",
-            "W_all_mean": "W_all mean", "W_all_std": "W_all std",
-            "W_in_mean": "W_in mean", "W_in_std": "W_in std",
-        }
+            # Markdown table
+            md_lines.append(f"### `{model}`\n")
+            header = "| Parameter |" + " | ".join(f" {s} " for s in stages_found) + " |"
+            sep = "|-----------|" + "|".join(["--------:"] * len(stages_found)) + "|"
+            md_lines.append(header)
+            md_lines.append(sep)
 
-        for pname in all_display:
-            display = DISPLAY.get(pname, pname)
-            vals = []
-            for stage in stages_found:
-                if pname in data[stage]:
-                    vals.append(fmt(data[stage][pname]))
-                else:
-                    vals.append("—")
-            md_lines.append(f"| {display} | " + " | ".join(vals) + " |")
+            all_display = [d for _, d, _, cond in PARAMS if cond(model)] + weight_params
+            DISPLAY = {
+                "W_E_mean": "W_E mean", "W_E_std": "W_E std",
+                "W_I_mean": "W_I mean", "W_I_std": "W_I std",
+                "W_all_mean": "W_all mean", "W_all_std": "W_all std",
+                "W_in_mean": "W_in mean", "W_in_std": "W_in std",
+            }
 
-        md_lines.append("")
+            for pname in all_display:
+                display = DISPLAY.get(pname, pname)
+                vals = []
+                for stage in stages_found:
+                    if pname in data[stage]:
+                        vals.append(fmt(data[stage][pname]))
+                    else:
+                        vals.append("—")
+                md_lines.append(f"| {display} | " + " | ".join(vals) + " |")
 
-        # Console table
-        col_w = 12
-        hdr = f"{'Param':<14s}" + "".join(f"{s:>{col_w}s}" for s in stages_found)
-        console_output.append(f"\n  {model}")
-        console_output.append("  " + "-" * len(hdr))
-        console_output.append("  " + hdr)
-        console_output.append("  " + "-" * len(hdr))
-        for pname in all_display:
-            display = DISPLAY.get(pname, pname)
-            line = f"{display:<14s}"
-            for stage in stages_found:
-                if pname in data[stage]:
-                    line += f"{fmt(data[stage][pname]):>{col_w}s}"
-                else:
-                    line += f"{'—':>{col_w}s}"
-            console_output.append("  " + line)
+            md_lines.append("")
 
-    # ── Per-neuron models ──────────────────────────────────────────────
-    for model in SRNN_PER_NEURON_MODELS:
-        ckpt_dir = get_ckpt_dir(base_dir, model, experiment, seed)
-        has_I = model == "srnn-per-neuron"
+            # Console table
+            col_w = 12
+            hdr = f"{'Param':<14s}" + "".join(f"{s:>{col_w}s}" for s in stages_found)
+            console_output.append(f"\n  {model}")
+            console_output.append("  " + "-" * len(hdr))
+            console_output.append("  " + hdr)
+            console_output.append("  " + "-" * len(hdr))
+            for pname in all_display:
+                display = DISPLAY.get(pname, pname)
+                line = f"{display:<14s}"
+                for stage in stages_found:
+                    if pname in data[stage]:
+                        line += f"{fmt(data[stage][pname]):>{col_w}s}"
+                    else:
+                        line += f"{'—':>{col_w}s}"
+                console_output.append("  " + line)
 
-        pn_data = {}
-        for stage, suffix in CHECKPOINT_SUFFIXES.items():
-            ckpt_path = os.path.join(ckpt_dir, f"{model}{suffix}")
-            row = read_per_neuron_checkpoint(ckpt_path, model)
-            if row is not None:
-                pn_data[stage] = row
+        # ── Per-neuron models ──────────────────────────────────────────────
+        for model in SRNN_PER_NEURON_MODELS:
+            ckpt_dir = get_ckpt_dir(base_dir, model, experiment, seed)
+            has_I = model == "srnn-per-neuron"
 
-        if not pn_data:
-            print(f"  {model}: no checkpoints found, skipping")
-            continue
+            pn_data = {}
+            for stage, suffix in CHECKPOINT_SUFFIXES.items():
+                ckpt_path = os.path.join(ckpt_dir, f"{model}{suffix}")
+                row = read_per_neuron_checkpoint(ckpt_path, model)
+                if row is not None:
+                    pn_data[stage] = row
 
-        stages_found = [s for s in ["Init", "Best", "Last"] if s in pn_data]
-        print(f"  {model}: found {', '.join(stages_found)}")
+            if not pn_data:
+                print(f"  {model}: no checkpoints found, skipping")
+                continue
 
-        # Build param list based on model type
-        pn_params = ["tau_d (E)"]
-        if has_I:
-            pn_params.append("tau_d (I)")
-        pn_params.append("a_0 (E)")
-        if has_I:
-            pn_params.append("a_0 (I)")
-        pn_params.extend(["tau_a_E_lo", "tau_a_E_hi", "c_E", "c_0_E"])
-        if has_I:
-            pn_params.extend(["tau_a_I_lo", "tau_a_I_hi", "c_I", "c_0_I"])
-        pn_params.extend(["tau_b_E_rec", "tau_b_E_rel"])
-        if has_I:
-            pn_params.extend(["tau_b_I_rec", "tau_b_I_rel"])
-        pn_params.extend(["W_E", "W_I", "W_all", "W_in"])
+            exp_has_data = True
+            stages_found = [s for s in ["Init", "Best", "Last"] if s in pn_data]
+            print(f"  {model}: found {', '.join(stages_found)}")
 
-        def fmt_ms(mean, std):
-            return f"{fmt(mean)} ± {fmt(std)}"
+            # Build param list based on model type
+            pn_params = ["tau_d (E)"]
+            if has_I:
+                pn_params.append("tau_d (I)")
+            pn_params.append("a_0 (E)")
+            if has_I:
+                pn_params.append("a_0 (I)")
+            pn_params.extend(["tau_a_E_lo", "tau_a_E_hi", "c_E", "c_0_E"])
+            if has_I:
+                pn_params.extend(["tau_a_I_lo", "tau_a_I_hi", "c_I", "c_0_I"])
+            pn_params.extend(["tau_b_E_rec", "tau_b_E_rel"])
+            if has_I:
+                pn_params.extend(["tau_b_I_rec", "tau_b_I_rel"])
+            pn_params.extend(["W_E", "W_I", "W_all", "W_in"])
 
-        # Markdown
-        md_lines.append(f"## `{model}` (mean ± std across neurons)\n")
-        header = "| Parameter |" + " | ".join(f" {s} " for s in stages_found) + " |"
-        sep = "|-----------|" + "|".join(["-------------------:"] * len(stages_found)) + "|"
-        md_lines.append(header)
-        md_lines.append(sep)
+            def fmt_ms(mean, std):
+                return f"{fmt(mean)} ± {fmt(std)}"
 
-        for pname in pn_params:
-            vals = []
-            for stage in stages_found:
-                if pname in pn_data[stage]:
-                    m, s = pn_data[stage][pname]
-                    vals.append(fmt_ms(m, s))
-                else:
-                    vals.append("—")
-            md_lines.append(f"| {pname} | " + " | ".join(vals) + " |")
-        md_lines.append("")
+            # Markdown
+            md_lines.append(f"### `{model}` (mean ± std across neurons)\n")
+            header = "| Parameter |" + " | ".join(f" {s} " for s in stages_found) + " |"
+            sep = "|-----------|" + "|".join(["-------------------:"] * len(stages_found)) + "|"
+            md_lines.append(header)
+            md_lines.append(sep)
 
-        # Console
-        col_w = 22
-        hdr = f"{'Param':<16s}" + "".join(f"{s:>{col_w}s}" for s in stages_found)
-        console_output.append(f"\n  {model} (mean ± std)")
-        console_output.append("  " + "-" * len(hdr))
-        console_output.append("  " + hdr)
-        console_output.append("  " + "-" * len(hdr))
-        for pname in pn_params:
-            line = f"{pname:<16s}"
-            for stage in stages_found:
-                if pname in pn_data[stage]:
-                    m, s = pn_data[stage][pname]
-                    line += f"{fmt_ms(m, s):>{col_w}s}"
-                else:
-                    line += f"{'—':>{col_w}s}"
-            console_output.append("  " + line)
+            for pname in pn_params:
+                vals = []
+                for stage in stages_found:
+                    if pname in pn_data[stage]:
+                        m, s = pn_data[stage][pname]
+                        vals.append(fmt_ms(m, s))
+                    else:
+                        vals.append("—")
+                md_lines.append(f"| {pname} | " + " | ".join(vals) + " |")
+            md_lines.append("")
+
+            # Console
+            col_w = 22
+            hdr = f"{'Param':<16s}" + "".join(f"{s:>{col_w}s}" for s in stages_found)
+            console_output.append(f"\n  {model} (mean ± std)")
+            console_output.append("  " + "-" * len(hdr))
+            console_output.append("  " + hdr)
+            console_output.append("  " + "-" * len(hdr))
+            for pname in pn_params:
+                line = f"{pname:<16s}"
+                for stage in stages_found:
+                    if pname in pn_data[stage]:
+                        m, s = pn_data[stage][pname]
+                        line += f"{fmt_ms(m, s):>{col_w}s}"
+                    else:
+                        line += f"{'—':>{col_w}s}"
+                console_output.append("  " + line)
+
+        if not exp_has_data:
+            md_lines.append(f"No SRNN checkpoints found for `{experiment}`.\n")
 
     # Write outputs
     os.makedirs(out_dir, exist_ok=True)
@@ -360,7 +397,7 @@ def generate_tables(base_dir, out_dir, run_name, experiment, seed):
 
     # Print console
     print("\n" + "=" * 60)
-    print(f"  SRNN Parameters: {run_name} / {experiment} / seed{seed}")
+    print(f"  SRNN Parameters: {run_name} / seed{seed}")
     print("=" * 60)
     for line in console_output:
         print(line)
@@ -369,7 +406,8 @@ def generate_tables(base_dir, out_dir, run_name, experiment, seed):
 def main():
     parser = argparse.ArgumentParser(description="Inspect SRNN parameters across checkpoints")
     parser.add_argument("--run", default="all50ep", help="Run name in GCS")
-    parser.add_argument("--experiment", default="har")
+    parser.add_argument("--experiment", default="all",
+                        help="Experiment name, or 'all' to auto-detect (default: all)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--local", default=None,
                         help="Path to local collect_results download dir (e.g. /tmp/collect_results/all50ep)")
@@ -395,7 +433,8 @@ def main():
             )
 
     out_dir = args.out_dir or os.path.join(base, "results", args.run)
-    generate_tables(base_dir, out_dir, args.run, args.experiment, args.seed)
+    experiments = [args.experiment] if args.experiment != "all" else ["all"]
+    generate_tables(base_dir, out_dir, args.run, experiments, args.seed)
 
 
 if __name__ == "__main__":
