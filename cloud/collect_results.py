@@ -530,7 +530,7 @@ def _run_inspect_srnn_params(run_name, out_dir):
     params_pdf = os.path.join(out_dir, "srnn_params.pdf")
     if os.path.isfile(params_md):
         time.sleep(2)  # ensure md is fully flushed before pandoc
-        _run_pandoc(params_md, params_pdf, paperwidth="11in", paperheight="8.5in")
+        _run_pandoc(params_md, params_pdf, paperwidth="23.39in", paperheight="33.11in")
 
 
 # ── Main ─────────────────────────────────────────────────────────────
