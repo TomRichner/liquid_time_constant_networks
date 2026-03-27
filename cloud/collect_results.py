@@ -481,19 +481,37 @@ def _run_pandoc(md_file, pdf_file, paperwidth="24in", paperheight="11in"):
 # ── SRNN parameter inspection ────────────────────────────────────────
 
 def _run_inspect_srnn_params(run_name, out_dir):
-    """Run inspect_srnn_params.py for har/seed1 and generate PDF."""
+    """Run inspect_srnn_params.py for the first experiment with SRNN checkpoints."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(script_dir)
     inspect_script = os.path.join(script_dir, "inspect_srnn_params.py")
     if not os.path.isfile(inspect_script):
         print(f"  inspect_srnn_params.py not found, skipping")
         return
 
-    print(f"\n  Running SRNN parameter inspection...")
+    # Auto-detect: find first experiment with SRNN checkpoint data
+    local_dir = os.path.join(project_dir, "tmp", "collect_results", run_name)
+    srnn_models = [m for m in MODELS if m.startswith("srnn")]
+    target_exp = None
+    for exp in EXPERIMENTS:
+        for model in srnn_models:
+            ckpt_dir = os.path.join(local_dir, model, exp, "seed1", "checkpoint")
+            if os.path.isdir(ckpt_dir) and os.listdir(ckpt_dir):
+                target_exp = exp
+                break
+        if target_exp:
+            break
+
+    if not target_exp:
+        print(f"  No SRNN checkpoints found for any experiment, skipping param inspection")
+        return
+
+    print(f"\n  Running SRNN parameter inspection (experiment: {target_exp})...")
     try:
         subprocess.run([
             sys.executable, inspect_script,
             "--run", run_name,
-            "--experiment", "har",
+            "--experiment", target_exp,
             "--seed", "1",
             "--out_dir", out_dir,
         ], check=True, capture_output=True, text=True, timeout=120)
